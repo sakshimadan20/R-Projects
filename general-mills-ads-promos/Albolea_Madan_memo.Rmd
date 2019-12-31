@@ -1,0 +1,90 @@
+---
+output: 
+  html_document: 
+    theme: readable
+---
+
+```{r, echo=FALSE}
+# define default values for code chunks
+knitr::opts_chunk$set(echo=FALSE, message = FALSE, warning = FALSE, dpi=300)
+
+```
+
+```{r setup}
+library(tidyverse)
+library(magrittr)
+library(here)
+library(scales)
+```
+
+```{r importing_db}
+gm_data <- read_csv('/Users/sakshi/Documents/Syllabus/Data Visualization/Midterm Project/mtp_data.csv')
+#gm_data <- read_csv(here('Midterm Project','mtp_data.csv'))
+```
+
+```{r adjusting}
+
+gm_data %<>% mutate(iri_key = as.factor(iri_key),
+                    UPC = as.factor(UPC),
+                    promo = as.factor(promo),
+                    flavor = as.factor(flavor),
+                    ad = as.factor(ad),
+                    package = as.factor(package)
+                    )
+
+# Separating in a bad way the brand and producer
+gm_data %<>% separate(brand,"GENERAL MILLS ",into=c("aux", "flavor_GM"),remove = FALSE) %>% 
+              separate(brand,"KELLOGGS ",into=c("aux", "flavor_KL"),remove = FALSE) %>% 
+              separate(brand,"POST ",into=c("aux", "flavor_PT"),remove = FALSE) %>% 
+              mutate(producer = case_when( not(is.na(flavor_GM)) ~ "General Mills",
+                                           not(is.na(flavor_KL)) ~ "Kelloggs",
+                                           not(is.na(flavor_PT)) ~ "POST",
+                                           TRUE ~ "ERROR"
+                                           ),
+                     brand = case_when(producer=="General Mills" ~ flavor_GM,
+                                      producer=="Kelloggs" ~ flavor_KL,
+                                      producer=="POST" ~ flavor_PT),
+                     producer = as.factor(producer),
+                     brand = as.factor(brand),
+                     ad = factor(ad, 
+                                 levels = c("A","B","NONE"), 
+                                 labels = c("Medium","Small","None") 
+                                  ),
+                     revenue = units*price) %>% 
+              select(-aux,-flavor_GM,-flavor_KL,-flavor_PT)
+
+
+```
+
+```{r}
+med_ads_promo_producer <- gm_data %>% group_by(producer, ad, promo) %>% summarise(med_revenue = median(revenue), 
+                                                                                  n = n())
+gm_data_che <- gm_data %>% filter(brand == "CHEERIOS") %>% mutate(promo_ad = paste(promo,ad)) %>% group_by(promo_ad) %>% summarise(med_rev = median(revenue))
+```
+#### **To: Quian Xu**
+#### **From: Renato Albolea and Sakshi Madan**
+#### **Date: 11/02/2019**
+#### **RE: Effectiveness of promotions and advertisements on cereal sales**
+
+***
+
+Cereal tops the list of most common breakfast foods in United States. To keep up with competition, it is important to know how our company is doing relative to primary competitors. To accomplish our goal, we extracted a sample data  with `r format(nrow(gm_data), big.mark=",", scientific=FALSE)` observations on weekly sales of cereals from several stores to analyze. It was interesting to find effectiveness of advertising and promotions on sales between different producers. We found that General Mills perform better with promotions and medium-sized ads whereas the biggest competitor, Kelloggs with promotions and small-sized ads. Also, all cereal brands under General Mills are following the same pattern except Cheerios, which surprisingly performs better without any kind of promotions or ads. 
+
+We found out that median [^1] revenue of General Mills increase at a high rate with promotions and medium-sized ads as compared to no promotions and ads, from `r dollar(med_ads_promo_producer$med_revenue[5])` to `r dollar(med_ads_promo_producer$med_revenue[2])` (increase of `r round(med_ads_promo_producer$med_revenue[2]/med_ads_promo_producer$med_revenue[5]-1,3)*100`%), as shown in the graph below. As you can see, there is a sudden increase in median revenue for the scenario of 'no promo and small ads', the reason for which still need to be investigated.
+
+![](General_Mills.png){width=600px}
+
+
+We were surprised to find that Cheerios’ median revenue is `r -round(gm_data_che$med_rev[5] / gm_data_che$med_rev[2] - 1,3)*100`% lower when a flavor of promotions is added to the brand, as shown in the graph below. Cheerios performance is a major part of General Mills revenue, promoting the brand seems to impact the sales in a negative manner.
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;![](Cheerios.png){width=600px}
+
+In conclusion, we can say that General Mills’ should adopt the strategy of promoting brands with medium sized ads since it is generating most revenue for the company. Cheerios is the only brand which does not need marketing strategy since it generates more revenue without that. For a future project, we should investigate why Cheerios performance declines with promotions.
+
+Please do not hesitate to contact us if you have questions or would like to discuss the analysis further, it is best to reach us at albolear@seattleu.edu and smadan@seattleu.edu.
+
+Best regards,
+
+Renato and Sakshi
+
+[^1]: Median refers to the middle (half-above and half-below) of the data. We prefer to use median over mean (average) because median is not influenced by extreme values while mean is.

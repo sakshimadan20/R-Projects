@@ -1,0 +1,62 @@
+---
+title: "How to effectively \t use promotions and advertisements on Cereals to beat the competition? (Data: 1 year weekly sales)"
+author:
+- Prepared by Sakshi Madan
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+
+---
+
+```{r echo = FALSE}
+# Course: 5210 Communicating Data
+# Purpose: Flexdashboard for MTP Data
+# Date: November 19th, 2019
+# Author: Sakshi Madan
+
+```
+
+```{r echo = FALSE}
+# Clear environment of variables and functions
+rm(list = ls(all = TRUE)) 
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""), detach, character.only = TRUE, unload = TRUE)
+
+```
+
+```{r echo = FALSE}
+# Load packages
+library(flexdashboard)
+
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### <font color="black"> General Mills has a huge revenue gap to fill </font>
+
+![](comparison_chart.png)
+
+### <font color="black"> General Mills used lesser promotions / advertisements as compared to Kelloggs </font>
+
+![](/Users/sakshi/Documents/Syllabus/Data Visualization/QP2/promo_comparison.png)
+
+Row 
+-----------------------------------------------------------------------
+
+### <font color="black"> Promotions and advertisements uplifted the overall median revenue for GM </font>
+
+![](general_mills_chart.png) 
+
+
+
+### <font color="black"> Promotions' expenditure can be reorganized across brands</font>
+
+![](cheerios_promo_chart.png)
+
+### <font color="black"> Advertisements' expenditure can be reorganized across brands </font>
+
+![](cheerios_ad_chart.png)
+

@@ -1,0 +1,685 @@
+---
+title: "Mid Term Project"
+description: |
+    Technical Appendix.
+author:
+  - name: Renato Albolea 
+  - name: Sakshi Madan 
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    code_download: yes
+    df_print: kable
+    keep_md: yes
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r options}
+# Course: 5210 Communicating Data
+# Purpose: Technical Appendix of MidTerm Project
+# Author: Renato Albolea, Sakshi Madan 
+
+# define default values for code chunks
+knitr::opts_chunk$set(message = FALSE, dpi=300)
+
+```
+
+
+# Loading Packages
+
+```{r setup}
+# Clear environment
+rm(list = ls(all = TRUE))
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)
+  lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""),
+         detach, character.only = TRUE, unload = TRUE)
+
+# Load Packages
+library(tidyverse) 
+library(scales) #format numbers as currency
+library(here) # easier way to find file path
+library(kableExtra) #improved tables
+library(gridExtra) # use to put graphs together in the same frame
+library(ggthemes) #themes for graphs
+library(GGally) #EDA Analyzis
+library(qwraps2) #Nicer Summary
+library(magrittr) #ables %<>%
+library(janitor) #Tools for Examining and Cleaning Dirty Data
+library(rcompanion) # to run pairwiseMedianTest function in the rcompanion package, which conducts Mood’s median test on all pairs of groups from one-way data
+library(tools) # Apply toTitleCase function
+# define the markup language we are working in.
+options(qwraps2_markup = "markdown")
+
+```
+
+# Importing database
+```{r importing_db}
+
+gm_data <- read_csv('/Users/sakshi/Documents/Syllabus/Data Visualization/Midterm Project/mtp_data.csv')
+#gm_data <- read_csv(here('Midterm Project','mtp_data.csv'))
+
+gm_data %>% head() %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+
++ __First observations:__
+  - The data is in a tidy format  
+  - There are `r format(nrow(gm_data), big.mark=",", scientific=FALSE)` observations and `r ncol(gm_data)` variables in the data set
+  
++ __Variables explanation__
+  - iri_key: store number (Need to be a Factor)
+  - UPC: unique product number (Need to be a Factor)
+  - week: week of sale
+  - units: number of cereal packages sold
+  - brand: producer and brand
+  - promo: in store promotion 0/1 is no/yes (Need to be a Factor)
+  - price: price per package
+  - flavor: cereal flavor group (Need to be a Factor)
+  - volume: cereal package size
+  - package: type of cereal container (Need to be a Factor)
+  - ad: (Need to be a Factor)  
+      NONE  
+      A – medium  
+      B – small  
+
+# Adjusting data
+```{r adjusting, warning=FALSE}
+
+gm_data %<>% mutate(iri_key = as.factor(iri_key),
+                    UPC = as.factor(UPC),
+                    promo = as.factor(promo),
+                    flavor = as.factor(flavor),
+                    ad = as.factor(ad),
+                    package = as.factor(package)
+                    )
+
+# Separating in a bad way the brand and producer
+gm_data %<>% separate(brand,"GENERAL MILLS ",into=c("aux", "flavor_GM"),remove = FALSE) %>% 
+              separate(brand,"KELLOGGS ",into=c("aux", "flavor_KL"),remove = FALSE) %>% 
+              separate(brand,"POST ",into=c("aux", "flavor_PT"),remove = FALSE) %>% 
+              mutate(producer = case_when( not(is.na(flavor_GM)) ~ "General Mills",
+                                           not(is.na(flavor_KL)) ~ "Kelloggs",
+                                           not(is.na(flavor_PT)) ~ "POST",
+                                           TRUE ~ "ERROR"
+                                           ),
+                     brand = case_when(producer=="General Mills" ~ toTitleCase(tolower(flavor_GM)),
+                                      producer=="Kelloggs" ~ toTitleCase(tolower(flavor_KL)),
+                                      producer=="POST" ~ toTitleCase(tolower(flavor_PT))
+                                      ),
+                     producer = as.factor(producer),
+                     brand = as.factor(brand),
+                     ad = factor(ad, 
+                                 levels = c("A","B","NONE"), 
+                                 labels = c("Medium","Small","None") 
+                                  ),
+                     revenue = units*price) %>% 
+              select(-aux,-flavor_GM,-flavor_KL,-flavor_PT)
+
+gm_data %>% str() 
+```
+
+__Question: Does Flavor give us any new information?__
+
+```{r}
+gm_data %>% group_by(brand,flavor) %>% summarise(n()) %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+  + As we can see above, the only cases when flavor adds a new breakdown are:
+    - Cheerios : Toasted and Regular
+    - Lucky Charms: Toasted and Regular
+  + However, the number of elements in Cheerios Regular (4) and Lucky Charms Regular (3) are very small, so we cannot have any statistical inference of difference among Cheerios Regular and Toasted or among Lucky Charms Regular and Toasted.
+  
+  
+# Base EDA 
+
+## Step 1: Uni-variate non-graphical EDA 
+```{r}
+gm_data %>% summary()
+
+```
+
++ __Findings__
+  - Units seem to be skewed to the right, so we should use median instead of mean;
+  - Cereals are bought in Cups only `r round(sum(gm_data$package=="CUP")/nrow(gm_data)*100,1)`% of the time and in Boxes on the rest of the time;
+  - Volume seems not skewed, thus we can use mean or median;
+  - Price seems not skewed, thus we can use mean or median;
+  - Cereals are in promo `r round(sum(gm_data$promo==1)/nrow(gm_data)*100,1)`% of the time
+  - Cereals have small ads `r round(sum(gm_data$ad=="Small")/nrow(gm_data)*100,1)`% of the time and medium ads `r round(sum(gm_data$ad=="Medium")/nrow(gm_data)*100,1)`% of the time;
+  - General Mills represents `r round(sum(gm_data$producer=="General Mills")/nrow(gm_data)*100,1)`% of the sales while Kelloggs represents `r round(sum(gm_data$producer=="Kelloggs")/nrow(gm_data)*100,1)`% and Post represents `r round(sum(gm_data$producer=="POST")/nrow(gm_data)*100,1)`%;
+ 
+## Step 2: Univariate graphical analysis 
+
+ - histograms and boxplots of quantitative variables
+ - uni-variate bar graphs of factor variables
+ 
+### week
+```{r}
+# Uni-variate graphical analysis of quantiative variables
+grid.arrange(gm_data %>% ggplot(mapping = aes(x = week)) + geom_histogram(),
+             gm_data %>% ggplot(mapping = aes(x = 1, y = week)) + geom_boxplot() + coord_flip(),
+             ncol = 1)
+```
+ - The weekly sale seems to have a pattern that could be explored in the future.
+
+### units
+```{r}
+# Uni-variate graphical analysis of quantiative variables
+grid.arrange(gm_data %>% ggplot(mapping = aes(x = units)) + geom_histogram(bins = max(gm_data$units)),
+             gm_data %>% ggplot(mapping = aes(x = 1, y = units)) + geom_boxplot() + coord_flip(),
+             ncol = 1)
+```
+  - The number of units sold per transaction varies and follows a log normal distribution as expected.  
+  - It would be interesting to understand better the relationship among number of units, volume, promotion, and ads for larger amounts of units in a following project.
+  
+### volume
+```{r}
+# Uni-variate graphical analysis of quantiative variables
+grid.arrange(gm_data %>% ggplot(mapping = aes(x = volume)) + geom_histogram(),
+             gm_data %>% ggplot(mapping = aes(x = 1, y = volume)) + geom_boxplot() + coord_flip(),
+             ncol = 1)
+```
+  - Cereals are sold in 7 main sizes.
+
+### Price
+```{r}
+# Uni-variate graphical analysis of quantiative variables
+grid.arrange(gm_data %>% ggplot(mapping = aes(x = price)) + geom_histogram(),
+             gm_data %>% ggplot(mapping = aes(x = 1, y = price)) + geom_boxplot() + coord_flip(),
+             ncol = 1)
+```
+  - Price seems to be skewed, thus we should use median instead of mean.
+  
+### Revenue
+```{r}
+# Uni-variate graphical analysis of quantiative variables
+grid.arrange(gm_data %>% ggplot(mapping = aes(x = revenue)) + geom_histogram(),
+             gm_data %>% ggplot(mapping = aes(x = 1, y = revenue)) + geom_boxplot() + coord_flip(),
+             ncol = 1)
+```
+ - Revenue seems to be skewed, thus we should use median instead of mean.
+ 
+### iri_key(stores)
+```{r}
+# Uni-variate graphical analysis of factor variables
+gm_data %>% ggplot(mapping = aes(x = iri_key)) + geom_bar()
+```
+  
+
+### flavor
+```{r}
+# Uni-variate graphical analysis of factor variables
+gm_data %>% ggplot(mapping = aes(x = flavor)) + geom_bar()
+```
+  - Regular and Toasted are the main flavors.
+
+### package
+```{r}
+# Uni-variate graphical analysis of factor variables
+gm_data %>% ggplot(mapping = aes(x = package)) + geom_bar()
+```
+  - Consumers buy almost only boxes.
+
+### promo
+```{r}
+# Uni-variate graphical analysis of factor variables
+gm_data %>% ggplot(mapping = aes(x = promo)) + geom_bar()
+```
+  - Promo periods seems to be a good size of the data.
+  
+### ad
+```{r}
+# Uni-variate graphical analysis of factor variables
+gm_data %>% ggplot(mapping = aes(x = ad)) + geom_bar()
+```
+  - Producers seems to use more promo than ads.
+
+### producer
+```{r}
+# Uni-variate graphical analysis of factor variables
+gm_data %>% ggplot(mapping = aes(x = producer)) + geom_bar()
+```
+  - Kelloggs is the main brand.
+  
+### name
+```{r}
+# Uni-variate graphical analysis of factor variables
+gm_data %>% ggplot(mapping = aes(x = brand)) + geom_bar()
+```
+
+
+### Findings
+  - Sales varies between the weeks, but it appears to follow a pattern with some expressive declines (why?)  
+  - Consumer tend to buy small units of products and the distribution seems logarithmic (why there are some gaps in units? what are the values?)
+  - The volume near 1 is more usually bought than the others. (which size? does price/market share varies with volume?)
+  - Regular and Toasted are the favorite flavors `r round(sum(or(gm_data$flavor=="REGULAR",gm_data$flavor=="TOASTED"))/nrow(gm_data)*100,1)`% of sales
+  
+  
+### Questions
+  - Does sales / price varies with Ad?
+  - Does sales / price varies with promo?
+  - Does promo/ad impacts market share?
+  - Does promo/ad impacts market volume / units?
+  - Does promo/ad and week volume has correlation? is anyway linked with the drop in sales over some weeks?
+  - What is the relationship between volume and price?
+  - Does the brands use the same price strategy?
+  - What are the most expensive / cheapest cereals? Is that constant over weeks?
+  
+  
+## Step 3: Multi-variate non-graphical analysis
+
+### Promotion x Producer
+
+```{r table_Promotion_vs_producer}
+# Proportion contingency/cross table
+gm_data %>% 
+  tabyl(producer, promo) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+
+### Ad x Producer
+
+```{r table_ad_vs_producer}
+# Proportion contingency/cross table
+gm_data %>% 
+  tabyl(producer, ad) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+### Flavor x Producer
+
+```{r table_flavor_vs_producer}
+# Proportion contingency/cross table
+gm_data %>% 
+  tabyl(producer, flavor) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+
+### Flavor x Promo
+
+```{r table_flavor_vs_promo}
+# Proportion contingency/cross table
+gm_data %>% 
+  tabyl(flavor, promo) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+
+### Flavor x ad
+
+```{r table_flavor_vs_ad}
+# Proportion contingency/cross table
+gm_data %>% 
+  tabyl(flavor, ad) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+
+### Promo x ad
+
+```{r table_Promotion_vs_ad}
+# Proportion contingency/cross table
+gm_data %>% 
+  tabyl(promo, ad) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  kable()
+```
+
+### Producer x Flavor x Promo
+
+```{r table_Promotion_vs_flavor_vs_promo}
+# Proportion contingency/cross table
+gm_data %>% 
+  tabyl(producer, flavor, promo) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns()
+```
+
+
+### Producer x Flavor x ad
+
+```{r table_Promotion_vs_flavor_vs_ad}
+# Proportion contingency/cross table
+gm_data %>% 
+  tabyl(producer, flavor, ad) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() 
+```
+  
+
+### Correlation Table
+```{r}
+gm_data %>% select(week, units, price, volume) %>% cor() 
+```
+ 
++ __Findings__
+  - The use of promotion seems similar among the producer
+  - General Mills uses less advertisement than Kelloggs
+  - Post only sell Regular Flavor while General Mills and Kelloggs are more diversified
+  - There is a heavier use of advertisement when the products are in promotion.
+  - The sales proportions of General Mills does not depend on Ads.
+  - Cocoa and Fruit flavors use more promotion than Regular and Toasted flavors. 
+  - Cinnamon Toast is the flavor with less promo and less ads.
+  - There is a week correlation (`r gm_data %>% select(price,volume) %>% cor() %>% .[1][2]`)  between volume and price. We need to verify if it is statistical significant.
+  
+  
+  
+  - During promotions General Mills sell less Cinnamon Toasted, Regular, and Toasted Flavors
+  - During promotions Kelloggs also sell less Regular, and Toasted Flavors
+  - During promotions General Mills and Kelloggs sell more Cocoa and Fruit flavors
+  
+  
+## Step 4: Multi-variate graphical analysis
+
+### Price vs Producer
+
+```{r}
+gm_data %>% ggplot(aes(x=producer,y=price))+geom_boxplot()
+gm_data %>% ggplot(aes(x=price,fill=producer))+geom_density(alpha=0.5)
+```
+
+ - All the producers have similar median price
+ - POST has narrower interquartile price as compared to other two  
+
+### Price vs Flavor
+
+```{r}
+gm_data %>% ggplot(aes(x=flavor,y=price))+geom_boxplot()
+
+med_price = gm_data %>% group_by(flavor) %>% summarise(med_price = median(price))
+
+```
+
+ - Cinnamon Toast and Toasted have a slightly higher median price (`r med_price$med_price[1] `) as compared to others and also a larger interquartile range
+ - Cocoa has least median price (`r med_price$med_price[2]`) as compared to other flavors
+ 
+### Price vs Flavor vs Producer
+
+```{r}
+gm_data %>% ggplot(aes(x=flavor,y=price, color=producer))+geom_boxplot()
+
+```
+
+ - For cocoa flavor, Kelloggs has a higher median price than General Mills
+ - For regular flavor, Kelloggs again has a higher median price than General Mills and Post
+ - For toasted flavor, median price is similar for both Kelloggs and General Mills
+ 
+### Price vs volume
+
+```{r}
+gm_data %>% ggplot(aes(x=volume,y=price, color=producer))+geom_point() + geom_smooth(mapping = aes(color = producer), method = "lm", se = FALSE)
+
+gm_data %>% ggplot(aes(x=volume,y=price/volume, color=producer))+geom_point() + geom_smooth(mapping = aes(color = producer), method = "loess", se = FALSE)
+```
+
+ - Price per volume decreases as with the increase in volume across all three producers
+ 
+### Relationship among the variables
+```{r}
+#gm_data %>% select(-week,-iri_key, -UPC) %>%  ggpairs()
+
+gm_data %>% select(units,flavor,promo,ad,producer,price) %>%  ggpairs()
+```
+
+ - After looking at it, we noticed that units and price vary across promos and ads in different directions, we created a new variable revenue = units * price to account for both impacts at the same time 
+ 
+### Revenue vs Producer
+```{r}
+
+gm_data %>% ggplot(aes(x=producer,y = revenue)) + geom_boxplot()
+
+```
+
+ - General Mills appear to have a higher revenue followed by Kelloggs and Post
+ 
+### Revenue vs Producer vs Promo
+```{r}
+
+gm_data %>% ggplot(aes(x=producer,y = revenue, color=promo)) + geom_boxplot()
+gm_data %>% ggplot(aes(x=producer,y = units, color=promo)) + geom_boxplot()
+gm_data %>% ggplot(aes(x=producer,y = price, color=promo)) + geom_boxplot()
+
+```
+
+ - Across all three producers, median revenue increases with promo
+ - With promo, Kelloggs has a higher rate of median revenue increase as compared to other two
+ - With promo, Kelloggs also has an increase on the upper portion of its revenue interquartile range
+ - As mentioned before, the variation in number of units and price is very strong when producers use promo but in opposite direction, so it becomes very difficult to conclude the efficiency without using the revenue variable
+ 
+### Revenue vs Producer vs ads
+```{r}
+
+gm_data %>% ggplot(aes(x=producer,y = revenue, color=ad)) + geom_boxplot()
+gm_data %>% ggplot(aes(x=producer,y = units, color=ad)) + geom_boxplot()
+gm_data %>% ggplot(aes(x=producer,y = price, color=ad)) + geom_boxplot()
+```
+
+ - The median revenue of General Mills is slightly higher with medium ads
+ - The median revenue of Kelloggs is slightly higher with small ads
+ - Small ads also generate more revenue for Post
+ 
+### Median revenue vs Producer vs ads
+```{r}
+med_ads_prod <- gm_data %>% group_by(producer,ad) %>% summarise(med_revenue = median(revenue),
+                                                                   n = n())
+med_ads_prod %>% ggplot(aes(x = producer, y = med_revenue, fill = ad)) + geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
+```
+
+### Median revenue vs Producer vs promo
+```{r}
+med_promo_prod <- gm_data %>% group_by(producer,promo) %>% summarise(med_revenue = median(revenue),
+                                                                   n = n())
+med_promo_prod %>% ggplot(aes(x = producer, y = med_revenue, fill = promo)) + geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
+```
+
+### Median revenue vs flavor vs ads
+```{r}
+med_ads_flavor <- gm_data %>% group_by(flavor,ad) %>% summarise(med_revenue = median(revenue),
+                                                                   n = n())
+med_ads_flavor %>% ggplot(aes(x = flavor, y = med_revenue, fill = ad)) + geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
+
+ggsave('revenue_flavor_ads.png')
+
+```
+
+ - The median revenue for a flavor reduces as the length of the ad increases except for Toasted and Cinnamon Toast
+ 
+### Median revenue vs flavor vs promo
+```{r}
+med_promo_flavor <- gm_data %>% group_by(flavor,promo) %>% summarise(med_revenue = median(revenue),
+                                                                   n = n())
+med_promo_flavor %>% ggplot(aes(x = flavor, y = med_revenue, fill = promo)) + geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
+```
+
+ - The median revenue for all the flavors increase with promo
+ 
+### Median revenue vs brand vs ads
+```{r}
+med_ads_brand <- gm_data %>% group_by(producer, brand, ad) %>% summarise(med_revenue = median(revenue),
+                                                                   n = n())
+med_ads_brand %>% ggplot(aes(x = paste(producer,brand), y = med_revenue, fill = ad)) + geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
+```
+
+ - Interestingly, Cheerios from General Mills lose median revenue with ads
+ - Also, Frosted mini wheats from Kelloggs is losing median revenue with ads
+ - Kelloggs Raisin Bran has a higher median revenue with medium ads
+ 
+### Median revenue vs brand vs promo
+```{r}
+med_promo_brand <- gm_data %>% group_by(producer, brand,promo) %>% summarise(med_revenue = median(revenue),
+                                                                   n = n())
+med_promo_brand %>% ggplot(aes(x = paste(producer,brand), y = med_revenue, fill = promo)) + geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
+
+ggsave('revenue_brand_promo.png')
+
+```
+
+ - Interestingly, Cheerios from General Mills lose median revenue with promo
+ 
+### Median revenue vs producer vs promo and Ads
+```{r}
+med_ads_promo_producer <- gm_data %>% group_by(producer, ad, promo) %>% summarise(med_revenue = median(revenue), 
+                                                                                  n = n())
+med_ads_promo_producer %>% ggplot(aes(x = producer, y = med_revenue, fill = paste(promo,ad))) + 
+  geom_bar(stat = 'identity', position = 'dodge') + coord_flip()
+
+gm_data %>% ggplot(aes(x = producer, y = revenue,color=paste(promo,ad))) + 
+  geom_boxplot() + coord_flip()
+
+```
+
+ - General Mills make most median revenue on medium ads with promo followed by small ads without promo
+ - Kelloggs make most median revenue on small ads with promo followed by medium ads with promo
+
+ 
+<!-- 
+### Median revenue revenue brand vs promo and Ads
+```{r}
+med_ads_promo_brand_producer <- gm_data %>% group_by(producer, brand, ad, promo) %>% summarise(med_revenue = median(revenue),
+                                                                   n = n())
+kable(
+    med_ads_promo_brand_producer,
+    caption = "__caption__",
+    row.names = TRUE,
+    col.names = c("Producer","Brand","Adv","Promotion","Median Revenue","Quantity"),
+    align = 'c'  
+    ) %>%  
+      kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+--->
+
+### Volume distribution
+```{r}
+gm_data %>% ggplot(aes(x=volume)) + geom_density()+facet_wrap( ~ producer)
+gm_data %>% ggplot(aes(x=volume,fill=ad)) + geom_density(alpha=0.4)+facet_grid(rows= vars(producer))
+
+```
+
+  - For Post, during ad periods, there is a concentration of volumes in 4 different sizes
+
+### Units distribution
+```{r}
+gm_data %>% ggplot(aes(x=units)) + geom_density()+facet_wrap( ~ producer)
+gm_data %>% ggplot(aes(x=units,fill=ad)) + geom_density(alpha=0.4)+facet_grid(rows= vars(producer))
+
+```
+
+  - When we have ads, people tend to buy more units than in no ads periods.
+  
++ __In summary:__
+  1. General Mills seems to have a higher revenue during a Promo period with Medium size ads; 
+  2. Kelloggs appears to do better in a Promo with small size ads strategy;
+  3. The data suggests that Post do better during promo and small size strategy; 
+  3. It is interesting to notice that General Mills Cheerios has a lower median revenue during promo and ads. The same appears to be true for Kelloggs Frosted Mini Wheats;
+  4. Fruits and Cocoa flavor show signs that have the highest impact on revenue among the flavors during small ad campaigns;
+  
+
+# Testing statistical significance
+
+## General Mills has higher revenue in promo periods with medium size ads
+
+  As we saw earlier in this document since revenue is a skewed measure we should use the median instead of the mean. To test if the medians are different we will utilize the Mood’s median test.
+
+```{r, message=FALSE}
+median_test <- gm_data %>% filter(producer == "General Mills") %>% mutate(promo_ad = paste(promo,ad),
+                                                                          promo_ad = as.factor(promo_ad))
+
+PT = pairwiseMedianMatrix(revenue ~ promo_ad,
+                        data   = median_test,
+                        exact  = NULL,
+                        method = "bonferroni")
+kable(PT$Adjusted) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+
+Thus, we can conclude that General Mills' median revenue during promo and medium ads (median revenue =`r dollar(med_ads_promo_producer$med_revenue[2])` ) is statistically different from no promo with no ads (median revenue = `r dollar(med_ads_promo_producer$med_revenue[5])`, p-value adjusted = `r PT$Adjusted[4,2]*100`%) at 95% confidence level, and that General Mills' median revenue, during promo and no ads(median revenue = `r dollar(med_ads_promo_producer$med_revenue[6])`), is also different from no promo and no ads (p-value adjusted = `r PT$Adjusted[5,2]*100`%) at 95% confidence level.
+
+According to the data set, when General Mills uses promo and medium ads, the median revenue increases around `r round(med_ads_promo_producer$med_revenue[2]/med_ads_promo_producer$med_revenue[5]-1,3)*100`% in comparison to the base case scenario(no promo and no ads). Similarly, with promo and no ads the median revenue increases around `r round(med_ads_promo_producer$med_revenue[6]/med_ads_promo_producer$med_revenue[5]-1,3)*100`% in comparison to the base case scenario.
+
+Although the median revenue from the scenario of promo and medium ads is not statistically different from the case with promo and no ads (p-value adjusted = `r PT$Adjusted[4,6]*100`% ) the increase of revenue is practically significant (increase of `r round(med_ads_promo_producer$med_revenue[2]/med_ads_promo_producer$med_revenue[6]-1,3)*100`%), thus we conclude that doing a medium ad campaign is important and should be considered to be used with promo even though the increase in revenue is not reliable.
+
+```{r}
+med_ads_promo_GM <- gm_data %>% filter(producer == "General Mills") %>% group_by(ad, promo) %>% summarise(med_revenue = median(revenue), 
+                                                                                                          n = n()) %>% ungroup()
+sub_title = paste0("In that scenario median revenue increases ",
+                   round(med_ads_promo_producer$med_revenue[2]/med_ads_promo_producer$med_revenue[5]-1,3)*100,
+                   "% as compared \nto the base case of no Promo and no Ads")
+          
+med_ads_promo_GM %<>% mutate(scenario = as.factor(paste(promo,ad)),
+                         scenario = factor(scenario, 
+                                      levels = c("0 None","0 Small","0 Medium", "1 None","1 Small", "1 Medium"), 
+                                      labels = c("No Promo, No Ad","No Promo, Small Ad","No Promo, Medium Ad",
+                                                 "With Promo, No Ad","With Promo, Small Ad","With Promo, Medium Ad") 
+                                        )
+                         )
+med_ads_promo_GM %>% ggplot(aes(x = reorder(scenario,-as.numeric(scenario)), y = med_revenue, fill = scenario)) + 
+  geom_bar(stat = 'identity', position = 'dodge') + coord_flip() +
+  scale_y_continuous(labels = dollar) +
+  ggtitle("The highest median revenue for General Mills
+is when using promo and medium ads",
+          sub = sub_title) +
+  labs(x = "", y = "Median Revenue") +
+  theme_economist_white(gray_bg =FALSE) + scale_colour_economist()+
+  scale_fill_manual(values=c("grey65", "grey65", "grey65", "grey65","grey65","grey25"))+
+  theme(legend.position = "none")
+ggsave(filename = "General_Mills.png")
+```
+
+
+
+## General Mills Cheerios has a lower median revenue during promo and ads
+
+```{r}
+
+median_test_che <- gm_data %>% filter(brand == "Cheerios") %>% mutate(promo_ad = paste(promo,ad),
+                                                                  promo_ad = as.factor(promo_ad))
+
+PT = pairwiseMedianMatrix(revenue ~ promo_ad,
+                        data   = median_test_che,
+                        exact  = NULL,
+                        method = "bonferroni")
+
+kable(PT$Adjusted) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+
+gm_data_che <- gm_data %>% filter(brand == "Cheerios") %>% mutate(promo_ad = paste(promo,ad)) %>% group_by(promo_ad) %>% summarise(med_rev = median(revenue))
+
+
+```
+
+For the null hypothesis of Cheerios median revenue under promo and no ads being equal to median revenue under no promo and no ads, we don't have a strong enough evidence (p-value = `r PT$Adjusted[5,2]`) to reject it at a confidence level of 95%. However, at a confidence level of 85%, we have sufficient evidence to reject the null hypothesis.
+
+According to the data, Cheerios' median revenue is `r -round(gm_data_che$med_rev[5] / gm_data_che$med_rev[2] - 1,3)*100`% lower when in promo and no ads as compared to when not in promo and no ads, thus we conclude that General Mills should not use promos for Cheerios.
+
+
