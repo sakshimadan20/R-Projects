@@ -1,0 +1,405 @@
+---
+title: "Performance analysis of restaurants since the adoption of new food rating system by King County in January 2017"
+author: "Sakshi Madan"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: slidy_presentation
+---
+
+```{r echo = FALSE}
+# Course: 5210 Communicating Data
+# Purpose: Presentation
+# Date: December 13, 2019
+# Author: Sakshi Madan
+```
+
+```{r setup, warning = FALSE, echo = FALSE, message = FALSE}
+# Clear environment
+rm(list = ls(all = TRUE))
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)
+  lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""),
+         detach, character.only = TRUE, unload = TRUE)
+
+# Load Packages
+library(tidyverse) 
+library(here) 
+library(magrittr) 
+library(scales)
+```
+
+```{r importing_db, warning=FALSE, echo = FALSE, message = FALSE}
+inspection_data <- read_csv(here('Sample_Food_Inspection_Data.csv'))
+```
+
+```{r adjusting, warning=FALSE, message=FALSE, echo=FALSE}
+# Adjusting data types and names of the variables of required ones
+inspection_data <- inspection_data %>% 
+                            mutate(
+                            Inspection_Date =  as.Date(`Inspection Date`, "%m/%d/%Y"),
+                            City =  as.factor(toupper(City)), 
+                            Inspection_Business_Name =  as.factor(`Inspection Business Name`), 
+                            Inspection_Score =  as.numeric(`Inspection Score`), 
+                            Inspection_Closed_Business =  as.factor(`Inspection Closed Business`), 
+                            Violation_Type =  as.factor(`Violation Type`), 
+                            Violation_Points =  as.numeric(`Violation Points`), 
+                            Business_ID =  as.factor(Business_ID), 
+                            Inspection_Serial_Num =  as.factor(Inspection_Serial_Num), 
+                            )
+
+
+
+inspection_data$`Inspection Date` <- NULL
+inspection_data$`Inspection Business Name` <- NULL
+inspection_data$`Inspection Score` <- NULL
+inspection_data$`Inspection Closed Business` <- NULL
+inspection_data$`Violation Type` <- NULL
+inspection_data$`Violation Points` <- NULL
+
+#Looking for rows where inspection serial number is NA and will drop those rows
+inspection_data <- inspection_data %>% drop_na(Inspection_Serial_Num)
+
+#Factor level 'NONE' for violation types
+inspection_data$Violation_Type <- fct_explicit_na(inspection_data$Violation_Type, na_level = "NONE")
+
+#We still had 54 rows in the original dataset where inspection scores are NA, creating a new table for them
+na_score <- inspection_data[is.na(inspection_data$Inspection_Score),] %>% select(14,19)
+
+#Drop rows with duplicate inspection serial number
+na_score <- na_score[!duplicated(na_score$Inspection_Serial_Num),]
+
+#Looking for those inspection serial numbers with NA inspection score in the original table and summing their violation points to find out inspection score
+for (row in 1:nrow(na_score)) {
+  df <- inspection_data[inspection_data$Inspection_Serial_Num == na_score[row, "Inspection_Serial_Num"]$Inspection_Serial_Num,]
+  score <- sum(df$Violation_Points)
+  na_score[row, "Inspection_Score"]$Inspection_Score <- score
+}
+
+#Merging both the tables na_score and inspection_data
+inspection_data <- merge(inspection_data,na_score, by = c('Inspection_Serial_Num'), all.x = TRUE)
+inspection_data$Inspection_Score.x[is.na(inspection_data$Inspection_Score.x)] <- inspection_data$Inspection_Score.y[is.na(inspection_data$Inspection_Score.x)]
+
+na_score <- NULL
+inspection_data$Inspection_Score <- inspection_data$Inspection_Score.x
+inspection_data$Inspection_Score.x <- NULL
+inspection_data$Inspection_Score.y <- NULL
+
+# Looking for those rows where inspection score < 0 in original dataset
+negative_values <- inspection_data %>% 
+  filter(Inspection_Score < 0) %>% 
+  select(1,22)
+
+for (row in 1:nrow(negative_values)) {
+  df <- inspection_data[inspection_data$Inspection_Serial_Num == negative_values[row, "Inspection_Serial_Num"],]
+  score <- sum(df$Violation_Points)
+  negative_values[row, "Inspection_Score"] <- score
+}
+
+#Merging both the tables negative_values and inspection_data
+inspection_data <- merge(inspection_data,negative_values, by = c('Inspection_Serial_Num'), all.x = TRUE)
+inspection_data$Inspection_Score.x[inspection_data$Inspection_Score.x < 0] <- inspection_data$Inspection_Score.y[inspection_data$Inspection_Score.x < 0]
+
+negative_values <- NULL
+inspection_data$Inspection_Score <- inspection_data$Inspection_Score.x
+inspection_data$Inspection_Score.x <- NULL
+inspection_data$Inspection_Score.y <- NULL
+
+#Working on inspection date
+inspection_data$Year <- format(inspection_data$Inspection_Date,"%Y")
+
+inspection_data %<>% mutate(Year = case_when(
+                            Year == "0006" ~ "2006",
+                            Year == "0007" ~ "2007",
+                            Year == "0008" ~ "2008",
+                            Year == "0009" ~ "2009",
+                            Year == "0010" ~ "2010",
+                            Year == "0011" ~ "2011",
+                            Year == "0012" ~ "2012",
+                            Year == "0013" ~ "2013",
+                            Year == "0014" ~ "2014",
+                            Year == "0015" ~ "2015",
+                            Year == "0016" ~ "2016",
+                            Year == "0017" ~ "2017",
+                            Year == "0018" ~ "2018",
+                            Year == "0019" ~ "2019")
+                            )
+
+inspection_data$Inspection_Date <- NULL
+
+#selecting required columns
+inspection_data_filtered <-  inspection_data %>% select(c(1,6,9,10,14,17,18,19,21,22))
+
+
+#saving un-duplicated rows as per inspection serial number
+inspection_data_not_dup <- inspection_data_filtered[!duplicated(inspection_data_filtered$Inspection_Serial_Num),]
+
+```
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE}
+#For violations graph
+
+unique_business_inspection_year <- inspection_data_not_dup %>% 
+  group_by(Year) %>% 
+  summarise(count_businesses = n_distinct(Business_ID))
+
+#no violation
+none_count <- inspection_data_filtered %>% 
+  group_by(Year, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type != "NONE"))) %>% 
+  filter(count == 0) %>% 
+  group_by(Year) %>% 
+  summarise(none = n())
+
+none_count$ratio <- none_count$none / unique_business_inspection_year$count_businesses
+
+#red violation
+red_count_total <- inspection_data_filtered %>% 
+  group_by(Year, Business_ID) %>%
+  summarise(count = length(which(Violation_Type == "RED"))) %>%
+  filter(count != 0) 
+
+red_count <- red_count_total %>%
+  group_by(Year) %>%
+  summarise(red = n())
+
+red_count$ratio <- red_count$red/unique_business_inspection_year$count_businesses
+
+#blue violation
+blue_count_total <- inspection_data_filtered %>% 
+  group_by(Year, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "BLUE"))) %>%
+  filter(count != 0)
+
+red_count_total <- red_count_total %>% select(-3) 
+blue_count_total <- blue_count_total %>% select(-3)
+
+intersect <- inner_join(red_count_total, blue_count_total)
+blue_count <- anti_join(blue_count_total, intersect, by = c('Year','Business_ID'))
+
+blue_count <- blue_count %>%
+              group_by(Year) %>%
+              summarise(blue = n())
+
+blue_count$ratio <- blue_count$blue/unique_business_inspection_year$count_businesses
+
+```
+
+```{r echo=FALSE, warning = FALSE, message = FALSE}
+#For violations in cities graph
+
+city_unique_business_inspection_year <- inspection_data_not_dup %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City) %>% 
+  summarise(count_businesses = n_distinct(Business_ID))
+
+#none violation
+city_none_count <- inspection_data_filtered %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type != "NONE"))) %>% 
+  filter(count == 0) %>% 
+  group_by(Year, City) %>% 
+  summarise(none = n())
+
+merged_none <- merge(city_unique_business_inspection_year, city_none_count, by = c('Year','City'))
+merged_none$rate <- merged_none$none/merged_none$count_businesses
+
+
+#red violation
+city_red_count_total <- inspection_data_filtered %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "RED"))) %>% 
+  filter(count != 0) 
+
+city_red_count <- city_red_count_total %>% 
+  group_by(Year, City) %>% 
+  summarise(red = n())
+
+merged_red <- merge(city_unique_business_inspection_year, city_red_count, by = c('Year','City'))
+merged_red$rate <- merged_red$red/merged_red$count_businesses
+
+```
+
+
+Data and Agenda  
+===============================================
+
+<div style="float: left; width: 95%;">
+
++ Data
+<font size="5">
+    - Food Inspection data from January 2006 - November 2019
+    - We had 274782 observations for food inspections. There were multiple observations for inspections which had more than one violation
+    - Performance declines with higher inspection score
+    - Violation Types: Critical(Red) and Non-Critical(Blue)
+    - Restaurants with even one critical(red) violation in a particular year has been categorized under restaurants with critical violation
+    - We have chosen 5 major cities for comparison - Seattle, Bellevue, Kent, Renton, Federal Way because they have the maximum number of restaurants in King County
+
+</font>
+
++ Agenda
+<font size="5">
+    - Effect on median inspection score in King County
+    - Effect on median inspection score in 5 major cities
+    - Effect on number of restaurants with no violations, critical violations and blue violations
+    - Effect on number of restaurants with no violations in 5 major cities
+    - Effect on number of restaurants with critical(red) violations in 5 major cities
+
+</font>
+</div>
+
+Effect on median inspection score in King County
+===============================================
+
+<center>
+
+<br>
+```{r echo = FALSE, message = FALSE}
+median_inspection_score <- inspection_data_not_dup %>%
+  filter(Inspection_Score != 0) %>%
+  group_by(Year) %>%
+  summarise(score = median(Inspection_Score)) 
+
+subtitle = paste0("After the introduction of the new rating system in 2017, there was a decline of ", round((median_inspection_score$score[11] - median_inspection_score$score[12])/median_inspection_score$score[11]*100,2), "% median inspection score")
+
+median_inspection_score %>%
+  ggplot(mapping = aes(y = score, x = Year, group = 1)) +
+  geom_line() +
+  geom_vline(xintercept = 9, linetype="dotted", color = "dark grey", size=1) +
+  geom_vline(xintercept = 12, linetype="dotted", color = "dark grey", size=1) +
+  scale_x_discrete(labels = c('2006':'2019')) +
+  labs(title = "New rating system leading to better inspection scores",subtitle = subtitle , y = "Median Inspection Score", x ="") +
+  annotate("text", x = 7.9, y = 14.6, label = "Food Borne \nIllness Outbreak", size = 3, color ="dark grey") +
+  annotate("text", x = 12.8, y = 14.6, label = "New Rating \nSystem", size = 3, color = 
+             "dark grey") +
+  theme(plot.title = element_text(size = 11) ,plot.subtitle = element_text(size = 9), axis.title = element_text(size = 9), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), legend.title = element_blank())
+```
+</center>
+
+Effect on median inspection score in 5 major cities 
+==============================================
+<center>
+
+<br>
+```{r echo = FALSE, message = FALSE}
+median_inspection_score_cities <- inspection_data_not_dup %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  filter(Inspection_Score != 0) %>% 
+  group_by(Year, City) %>% 
+  summarise(score = median(Inspection_Score))
+
+subtitle = paste0("Median inspection score of Bellevue has been ", median_inspection_score_cities[66,3], " in 2018 and 2019 when the other cities were at ", median_inspection_score_cities[70,3])
+
+  
+ median_inspection_score_cities %>% 
+  ggplot(mapping = aes(x = Year, y = score, group = City, color = City, alpha = City, size = City)) + 
+  geom_line() +
+  labs(title = "Median inspection scores of all the cities is now the same except Bellevue", subtitle = subtitle, y = "Median Inspection Score") +
+  scale_alpha_manual(values = c(0.6,0.4,0.4,0.4,0.6)) +
+  scale_size_manual(values = c(3,2,1,1,1)) +
+  scale_color_manual(values = c("darkorange3","cadetblue","purple4","yellow4","grey25")) +
+  theme(plot.title = element_text(size = 11), plot.subtitle = element_text(size = 9), axis.title = element_text(size = 9), legend.position = "bottom",panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), legend.title = element_blank()) 
+```
+
+</center>
+
+Effect on number of restaurants with no violations, critical violations and non-critical violations
+============================================================================================
+
+<center>
+
+<br>
+```{r echo = FALSE, message = FALSE}
+none_count <- none_count %>% select(1,2)
+red_count <- red_count %>% select(1,2)
+blue_count <- blue_count %>% select(1,2)
+
+merged_violations <- merge(unique_business_inspection_year,none_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merge(merged_violations, red_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merge(merged_violations, blue_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merged_violations %>% gather(type, count, none:blue)
+merged_violations$rate <- merged_violations$count/merged_violations$count_businesses
+merged_violations$label <- paste0(sprintf("%.0f", merged_violations$rate*100), "%")
+
+merged_violations %>%
+        ggplot(mapping = aes(x = Year, y = rate, fill = factor(type, levels = c('blue','red','none')))) +
+        geom_bar(position = position_stack(), stat = "identity", width = 0.7) +
+        geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3, color = 'black') +
+        coord_flip() +
+        scale_fill_manual(values = c('steelblue4','red4','snow4'), name = "Violation Type:", labels = c("Blue","Red","None")) +
+        theme(legend.position = 'bottom', axis.title.y = element_blank(), plot.title = element_text(size = 11), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.title = element_text(size = 8), legend.text = element_text(size = 8), legend.key.size = unit(0.8,"line"),legend.margin=margin(0,0,0,0),legend.box.margin=margin(-3,-3,-3,-3)) +
+        labs(title = "New rating system is leading to healthier restaurants",y = "") +
+        guides(fill = guide_legend(reverse = TRUE))
+```
+
+</center>
+
+Effect on number of restaurants with no violations in 5 major cities
+============================================================================================
+
+<center>
+
+<br>
+```{r echo = FALSE, message = FALSE}
+subtitle = paste0("In Seattle, restaurants with no violations increased to ",round(merged_none[60,5]*100), "%, ",round(merged_none[65,5]*100), "% and ",round(merged_none[70,5]*100), "% in 2017, 2018 and 2019, respectively") 
+
+merged_none %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  ggplot(mapping = aes(y = rate*100, x = Year, group = City, color = City, alpha = City, size = City)) +
+  geom_line() +
+  labs(title = "Seattle is the only city with consistent growing percentage of non-violating restaurants since the introduction \nof new system in January 2017", x = "", y = "Percentage of non-violating restaurants", subtitle = subtitle) +
+  scale_alpha_manual(values = c(0.4,0.4,0.4,0.4,0.8)) +
+  scale_size_manual(values = c(1,1,1,1,3)) +
+  scale_color_manual(values = c("darkorange3","cadetblue","purple4","yellow4","grey25")) +
+  scale_y_continuous(labels = function(x) paste0(x, '%')) +
+  theme(plot.title = element_text(size = 11), plot.subtitle = element_text(size = 9), axis.title = element_text(size = 9), legend.position = "bottom", legend.title = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black")) 
+```
+
+</center>
+
+Effect on number of restaurants with critical(red) violations in 5 major cities
+============================================================================================
+
+<center>
+
+<br>
+```{r echo = FALSE, message = FALSE}
+subtitle = paste0("In Seattle, restaurants with red violations declined to ",round(merged_red[60,5]*100), "% , ",round(merged_red[65,5]*100), "%  and ",round(merged_red[70,5]*100), "% in 2017, 2018 and 2019, respectively") 
+
+merged_red %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  ggplot(mapping = aes(y = rate*100, x = Year, group = City, color = City, alpha = City, size = City)) +
+  geom_line() +
+  labs(title = "Seattle is the only city with consistent declining percentage of red violation restaurants since the \nintroduction of new system in January 2017", subtitle = subtitle, x = "", y = "Percentage of red violation restaurants") + scale_y_continuous(labels = function(x) paste0(x, '%')) +
+  scale_alpha_manual(values = c(0.4,0.4,0.4,0.4,0.8)) +
+  scale_size_manual(values = c(1,1,1,1,3)) +
+  scale_color_manual(values = c("darkorange3","cadetblue","purple4","yellow4","grey25")) +
+  #scale_y_continuous(labels = percent) +
+  theme(plot.title = element_text(size = 11), plot.subtitle = element_text(size = 9), axis.title = element_text(size = 9), legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), legend.title = element_blank())
+```
+
+</center>
+
+Summary
+===============================================
+
+<div style="float: left; width: 95%;">
+
+<br>
+<font size="5">
+
++ Performance of restaurants are improving in terms of inspection score
+
++ Each city is responding differently to rating system
+
++ Seattle is the most consistent one among the 5 cities
+
++ Recommendations, questions and suggestions
+
++ My contact information, email: smadan@seattleu.edu
+
+</font>
+</div>
+

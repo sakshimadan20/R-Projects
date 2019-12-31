@@ -1,0 +1,303 @@
+---
+output: 
+  html_document: 
+    theme: readable
+---
+
+```{r, echo=FALSE}
+# define default values for code chunks
+knitr::opts_chunk$set(echo=FALSE, message = FALSE, warning = FALSE, dpi=300)
+
+```
+
+```{r setup, echo=FALSE, warning=FALSE, message=FALSE}
+# Clear environment
+rm(list = ls(all = TRUE))
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)
+  lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""),
+         detach, character.only = TRUE, unload = TRUE)
+
+
+library(tidyverse)
+library(magrittr)
+library(here)
+library(scales)
+```
+
+```{r importing_db, echo=FALSE, warning=FALSE, message=FALSE}
+inspection_data <- read_csv(here('Sample_Food_Inspection_Data.csv'))
+```
+
+```{r adjusting, warning=FALSE, message=FALSE, echo=FALSE}
+# Adjusting data types and names of the variables of required ones
+inspection_data <- inspection_data %>% 
+                            mutate(
+                            Inspection_Date =  as.Date(`Inspection Date`, "%m/%d/%Y"),
+                            City =  as.factor(toupper(City)), 
+                            Inspection_Business_Name =  as.factor(`Inspection Business Name`), 
+                            Inspection_Score =  as.numeric(`Inspection Score`), 
+                            Inspection_Closed_Business =  as.factor(`Inspection Closed Business`), 
+                            Violation_Type =  as.factor(`Violation Type`), 
+                            Violation_Points =  as.numeric(`Violation Points`), 
+                            Business_ID =  as.factor(Business_ID), 
+                            Inspection_Serial_Num =  as.factor(Inspection_Serial_Num), 
+                            )
+
+
+
+inspection_data$`Inspection Date` <- NULL
+inspection_data$`Inspection Business Name` <- NULL
+inspection_data$`Inspection Score` <- NULL
+inspection_data$`Inspection Closed Business` <- NULL
+inspection_data$`Violation Type` <- NULL
+inspection_data$`Violation Points` <- NULL
+
+#Looking for rows where inspection serial number is NA and will drop those rows
+inspection_data <- inspection_data %>% drop_na(Inspection_Serial_Num)
+
+#Factor level 'NONE' for violation types
+inspection_data$Violation_Type <- fct_explicit_na(inspection_data$Violation_Type, na_level = "NONE")
+
+#We still had 54 rows in the original dataset where inspection scores are NA, creating a new table for them
+na_score <- inspection_data[is.na(inspection_data$Inspection_Score),] %>% select(14,19)
+
+#Drop rows with duplicate inspection serial number
+na_score <- na_score[!duplicated(na_score$Inspection_Serial_Num),]
+
+#Looking for those inspection serial numbers with NA inspection score in the original table and summing their violation points to find out inspection score
+for (row in 1:nrow(na_score)) {
+  df <- inspection_data[inspection_data$Inspection_Serial_Num == na_score[row, "Inspection_Serial_Num"]$Inspection_Serial_Num,]
+  score <- sum(df$Violation_Points)
+  na_score[row, "Inspection_Score"]$Inspection_Score <- score
+}
+
+#Merging both the tables na_score and inspection_data
+inspection_data <- merge(inspection_data,na_score, by = c('Inspection_Serial_Num'), all.x = TRUE)
+inspection_data$Inspection_Score.x[is.na(inspection_data$Inspection_Score.x)] <- inspection_data$Inspection_Score.y[is.na(inspection_data$Inspection_Score.x)]
+
+na_score <- NULL
+inspection_data$Inspection_Score <- inspection_data$Inspection_Score.x
+inspection_data$Inspection_Score.x <- NULL
+inspection_data$Inspection_Score.y <- NULL
+
+# Looking for those rows where inspection score < 0 in original dataset
+negative_values <- inspection_data %>% 
+  filter(Inspection_Score < 0) %>% 
+  select(1,22)
+
+for (row in 1:nrow(negative_values)) {
+  df <- inspection_data[inspection_data$Inspection_Serial_Num == negative_values[row, "Inspection_Serial_Num"],]
+  score <- sum(df$Violation_Points)
+  negative_values[row, "Inspection_Score"] <- score
+}
+
+#Merging both the tables negative_values and inspection_data
+inspection_data <- merge(inspection_data,negative_values, by = c('Inspection_Serial_Num'), all.x = TRUE)
+inspection_data$Inspection_Score.x[inspection_data$Inspection_Score.x < 0] <- inspection_data$Inspection_Score.y[inspection_data$Inspection_Score.x < 0]
+
+negative_values <- NULL
+inspection_data$Inspection_Score <- inspection_data$Inspection_Score.x
+inspection_data$Inspection_Score.x <- NULL
+inspection_data$Inspection_Score.y <- NULL
+
+#Working on inspection date
+inspection_data$Year <- format(inspection_data$Inspection_Date,"%Y")
+
+inspection_data %<>% mutate(Year = case_when(
+                            Year == "0006" ~ "2006",
+                            Year == "0007" ~ "2007",
+                            Year == "0008" ~ "2008",
+                            Year == "0009" ~ "2009",
+                            Year == "0010" ~ "2010",
+                            Year == "0011" ~ "2011",
+                            Year == "0012" ~ "2012",
+                            Year == "0013" ~ "2013",
+                            Year == "0014" ~ "2014",
+                            Year == "0015" ~ "2015",
+                            Year == "0016" ~ "2016",
+                            Year == "0017" ~ "2017",
+                            Year == "0018" ~ "2018",
+                            Year == "0019" ~ "2019")
+                            )
+
+inspection_data$Inspection_Date <- NULL
+
+#selecting required columns
+inspection_data_filtered <-  inspection_data %>% select(c(1,6,9,10,14,17,18,19,21,22))
+
+#Pulling data from 2014-2019
+inspection_data_filtered <- inspection_data_filtered %>% filter(Year %in% c('2014','2015','2016','2017','2018','2019'))
+
+
+#saving un-duplicated rows as per inspection serial number
+inspection_data_not_dup <- inspection_data_filtered[!duplicated(inspection_data_filtered$Inspection_Serial_Num),]
+
+```
+
+```{r}
+#for inspection score graphs
+median_inspection_score <- inspection_data_not_dup %>%
+  filter(Inspection_Score != 0) %>%
+  group_by(Year) %>%
+  summarise(score = median(Inspection_Score)) 
+
+median_inspection_score_cities <- inspection_data_not_dup %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  filter(Inspection_Score != 0) %>% 
+  group_by(Year, City) %>% 
+  summarise(score = median(Inspection_Score))
+
+```
+
+
+```{r}
+#For violations graph
+
+unique_business_inspection_year <- inspection_data_not_dup %>% 
+  group_by(Year) %>% 
+  summarise(count_businesses = n_distinct(Business_ID))
+
+#no violation
+none_count <- inspection_data %>% 
+  group_by(Year, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type != "NONE"))) %>% 
+  filter(count == 0) %>% 
+  group_by(Year) %>% 
+  summarise(none = n())
+
+none_count$ratio <- none_count$none / unique_business_inspection_year$count_businesses
+
+#red violation
+red_count_total <- inspection_data_filtered %>% 
+  group_by(Year, Business_ID) %>%
+  summarise(count = length(which(Violation_Type == "RED"))) %>%
+  filter(count != 0) 
+
+red_count <- red_count_total %>%
+  group_by(Year) %>%
+  summarise(red = n())
+
+red_count$ratio <- red_count$red/unique_business_inspection_year$count_businesses
+
+#blue violation
+blue_count_total <- inspection_data_filtered %>% 
+  group_by(Year, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "BLUE"))) %>%
+  filter(count != 0)
+
+red_count_total <- red_count_total %>% select(-3) 
+blue_count_total <- blue_count_total %>% select(-3)
+
+intersect <- inner_join(red_count_total, blue_count_total)
+blue_count <- anti_join(blue_count_total, intersect, by = c('Year','Business_ID'))
+
+blue_count <- blue_count %>%
+              group_by(Year) %>%
+              summarise(blue = n())
+
+blue_count$ratio <- blue_count$blue/unique_business_inspection_year$count_businesses
+
+none_count <- none_count %>% select(1,2)
+red_count <- red_count %>% select(1,2)
+blue_count <- blue_count %>% select(1,2)
+
+merged_violations <- merge(unique_business_inspection_year,none_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merge(merged_violations, red_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merge(merged_violations, blue_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merged_violations %>% gather(type, count, none:blue)
+merged_violations$rate <- merged_violations$count/merged_violations$count_businesses
+merged_violations$label <- paste0(sprintf("%.0f", merged_violations$rate*100), "%")
+
+```
+
+
+```{r}
+#For violations in cities graph
+
+city_unique_business_inspection_year <- inspection_data_not_dup %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City) %>% 
+  summarise(count_businesses = n_distinct(Business_ID))
+
+#none violation
+city_none_count <- inspection_data_filtered %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type != "NONE"))) %>% 
+  filter(count == 0) %>% 
+  group_by(Year, City) %>% 
+  summarise(none = n())
+
+merged_none <- merge(city_unique_business_inspection_year, city_none_count, by = c('Year','City'))
+merged_none$rate <- merged_none$none/merged_none$count_businesses
+
+
+#red violation
+city_red_count_total <- inspection_data_filtered %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "RED"))) %>% 
+  filter(count != 0) 
+
+city_red_count <- city_red_count_total %>% 
+  group_by(Year, City) %>% 
+  summarise(red = n())
+
+merged_red <- merge(city_unique_business_inspection_year, city_red_count, by = c('Year','City'))
+merged_red$rate <- merged_red$red/merged_red$count_businesses
+```
+
+
+#### **To: King County Public Health**
+#### **From: Sakshi Madan**
+#### **Date: 12/13/2019**
+#### **RE: Effectiveness of new food rating system on the performance of restaurants**
+
+***
+
+Food borne diseases cause 76 million illnesses in US each year, and almost half of all money spent on food is spent in restaurants. After the major food borne illness outbreak in 2014, King County residents asked for more information about restaurant inspections which led to the launch of new food safety rating system in January 2017. The major change was developing a window sign which has the latest rating for the restaurant and is visible to everyone. The new system is almost three years old and we wanted to analyze how restaurants are responding to it. We extracted the food inspection data from January 1st, 2006 until November 13th, 2019 which had `r format(nrow(inspection_data), big.mark=",", scientific=FALSE)` observations. 
+
+
+It was interesting and exciting to find the impact of the new rating system on performance of the restaurants. We found out that the median [^1] inspection score of restaurants in King County has improved(declined) since the introduction of new rating system but when we compared these scores between 5 major cities, Seattle, Bellevue, Kent, Renton and Federal Way (they have the maximum number of restaurants in decreasing order), we found out that Bellevue is the one with the worst(highest) inspection score. Other 4 cities have the same median inspection score as of now. We also found out that the percentage of restaurants with no violations have increased, with critical(red) violations have decreased and non critical(blue) violations did not have much impact since 2017 in King County. We analyzed this trend in those 5 cities again and found out there was an increase in percentage of non-violating restaurants in 2017 among all but since then, Seattle is the only city consistently following this pattern. Also, there was a decline in percentage of restaurants with critical(red) violations in 2017 among all except Renton but again since then, Seattle is the only city consistently following this pattern.
+
+
+After the introduction of the new rating system, the median inspection score declined to `r median_inspection_score[4,2]` in 2017 and has been consistent since then. 
+
+<center>![](inspection_score.png){width=600px}</center>
+
+
+On comparing the score between major cities, it appeared that Bellevue is the outlier where the score has never declined since 2008. Median inspection score of all the cities is at `r median_inspection_score_cities[20,3]` as of now, but that of Bellevue is at `r median_inspection_score_cities[21,3]`.
+
+<center>![](inspection_score_cities.png){width=600px}</center>
+
+
+We found out that after the introduction of the new rating system in King County, restaurants with no violations increased to `r merged_violations[4,6]` in 2017 from `r merged_violations[3,6]` in 2016. They futher increased to `r merged_violations[5,6]` in 2018 and `r merged_violations[6,6]` in 2019 as shown in the graph below. 
+
+Also, restaurants with critical(red) violations decreased to `r merged_violations[10,6]` in 2017 from `r merged_violations[9,6]` in 2016. They futher decreased to `r merged_violations[11,6]` in 2018 and `r merged_violations[12,6]` in 2019.
+
+Restaurants with non-critical(blue) violations did not have a major impact. the reason for which needs to be investigated. The totals for 2007, 2008 and 2010 don't sum to 100% due to rounding off, please refer to the technical appendix for the exact percentages.  
+
+<center>![](/Users/sakshi/Documents/Syllabus/Data Visualization/QP2/No_Violations.png){width=600px}</center>
+
+We were surprised to find out that although all the cities had a decline in non-violating restaurants in 2017, Seattle is the only city which is following the changed trend consistently after that as well. As you can see in the below graph, in Seattle, restaurants with no violations increased to `r round(merged_none[20,5]*100)` % in 2017, `r round(merged_none[25,5]*100)` % in 2018 and `r round(merged_none[30,5]*100)` % in 2019. Other cities had a growth in 2017 but declined in either 2018 or 2019.
+
+
+<center>![](Seattle_no_violation.png){width=600px}</center>
+
+Similarly, Seattle is the only city which is consistently following the changed trend in critical(red) violation restaurants as well. As you can see in the graph below, in Seattle, restaurants with red violations declined to `r round(merged_red[20,5]*100)`%, `r round(merged_red[25,5]*100)`% and `r round(merged_red[30,5]*100)`% in 2017, 2018 and 2019 respectively. Other than Renton, all the cities had a decline in 2017 but increased again in 2018 or 2019.
+
+<center>![](Seattle_no_red_violation.png){width=600px}</center>
+
+In conclusion, we can say that overall there is an improvement in performance of the restaurants in King County. On analyzing the performance between major 5 cities which have the maximum number of restaurants, we recommend conducting more consulations and education sessions in cities other than Seattle (especially Bellevue) to make sure the owners understand the rating system. We should also have more number of routine inspections per restaurant in those cities and make sure the restaurant owners are meeting all of the food safety standards. For a future project, we should investigate why restaurants with non-critical (blue) violations did not have an impact of new rating system. Also, we should investigate remaining cities in King County as well.
+
+Please do not hesitate to contact me if you have questions or would like to discuss the analysis further, it is best to reach me at smadan@seattleu.edu.
+
+Best regards,
+
+Sakshi <br>
+Data Analyst <br>
+King County
+
+[^1]: Median refers to the middle (half-above and half-below) of the data. We prefer to use median over mean (average) because median is not influenced by extreme values while mean is.

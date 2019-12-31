@@ -1,0 +1,532 @@
+---
+title: "Performance analysis of restaurants since the adoption of new food rating system by King County in January 2017"
+output: 
+  flexdashboard::flex_dashboard:
+    social: menu
+    orientation: rows
+    vertical_layout: fill
+    source_code: embed
+runtime: shiny
+---
+
+```{r echo = FALSE}
+# Course: 5210 Communicating Data
+# Purpose: Food Inspection Dashboard
+# Date: December 13th, 2019
+# Author: Sakshi Madan
+```
+
+```{r setup, include=FALSE}
+# clear working directory
+rm(list = ls(all= TRUE))
+
+# load libraries
+library(ggplot2)
+library(flexdashboard)
+library(shiny)
+library(dplyr)
+library(knitr)
+library(ggmap)
+library(leaflet)
+library(tidyverse)
+library(magrittr)
+
+```
+
+```{r importing_db, warning=FALSE}
+inspection_data <- read_csv('Sample_Food_Inspection_Data.csv')
+```
+
+
+```{r adjusting, warning=FALSE, message=FALSE, echo=FALSE}
+# Adjusting data types and names of the variables of required ones
+inspection_data <- inspection_data %>% 
+                            mutate(
+                            Inspection_Date =  as.Date(`Inspection Date`, "%m/%d/%Y"),
+                            City =  as.factor(toupper(City)), 
+                            Inspection_Business_Name =  as.factor(`Inspection Business Name`), 
+                            Inspection_Score =  as.numeric(`Inspection Score`), 
+                            Inspection_Closed_Business =  as.factor(`Inspection Closed Business`), 
+                            Violation_Type =  as.factor(`Violation Type`), 
+                            Violation_Points =  as.numeric(`Violation Points`), 
+                            Business_ID =  as.factor(Business_ID), 
+                            Inspection_Serial_Num =  as.factor(Inspection_Serial_Num), 
+                            )
+
+
+
+inspection_data$`Inspection Date` <- NULL
+inspection_data$`Inspection Business Name` <- NULL
+inspection_data$`Inspection Score` <- NULL
+inspection_data$`Inspection Closed Business` <- NULL
+inspection_data$`Violation Type` <- NULL
+inspection_data$`Violation Points` <- NULL
+
+#Looking for rows where inspection serial number is NA and will drop those rows
+inspection_data <- inspection_data %>% drop_na(Inspection_Serial_Num)
+
+#Factor level 'NONE' for violation types
+inspection_data$Violation_Type <- fct_explicit_na(inspection_data$Violation_Type, na_level = "NONE")
+
+#We still had 54 rows in the original dataset where inspection scores are NA, creating a new table for them
+na_score <- inspection_data[is.na(inspection_data$Inspection_Score),] %>% select(14,19)
+
+#Drop rows with duplicate inspection serial number
+na_score <- na_score[!duplicated(na_score$Inspection_Serial_Num),]
+
+#Looking for those inspection serial numbers with NA inspection score in the original table and summing their violation points to find out inspection score
+for (row in 1:nrow(na_score)) {
+  df <- inspection_data[inspection_data$Inspection_Serial_Num == na_score[row, "Inspection_Serial_Num"]$Inspection_Serial_Num,]
+  score <- sum(df$Violation_Points)
+  na_score[row, "Inspection_Score"]$Inspection_Score <- score
+}
+
+#Merging both the tables na_score and inspection_data
+inspection_data <- merge(inspection_data,na_score, by = c('Inspection_Serial_Num'), all.x = TRUE)
+inspection_data$Inspection_Score.x[is.na(inspection_data$Inspection_Score.x)] <- inspection_data$Inspection_Score.y[is.na(inspection_data$Inspection_Score.x)]
+
+na_score <- NULL
+inspection_data$Inspection_Score <- inspection_data$Inspection_Score.x
+inspection_data$Inspection_Score.x <- NULL
+inspection_data$Inspection_Score.y <- NULL
+
+# Looking for those rows where inspection score < 0 in original dataset
+negative_values <- inspection_data %>% 
+  filter(Inspection_Score < 0) %>% 
+  select(1,22)
+
+for (row in 1:nrow(negative_values)) {
+  df <- inspection_data[inspection_data$Inspection_Serial_Num == negative_values[row, "Inspection_Serial_Num"],]
+  score <- sum(df$Violation_Points)
+  negative_values[row, "Inspection_Score"] <- score
+}
+
+#Merging both the tables negative_values and inspection_data
+inspection_data <- merge(inspection_data,negative_values, by = c('Inspection_Serial_Num'), all.x = TRUE)
+inspection_data$Inspection_Score.x[inspection_data$Inspection_Score.x < 0] <- inspection_data$Inspection_Score.y[inspection_data$Inspection_Score.x < 0]
+
+negative_values <- NULL
+inspection_data$Inspection_Score <- inspection_data$Inspection_Score.x
+inspection_data$Inspection_Score.x <- NULL
+inspection_data$Inspection_Score.y <- NULL
+
+#Working on inspection date
+inspection_data$Year <- format(inspection_data$Inspection_Date,"%Y")
+
+inspection_data %<>% mutate(Year = case_when(
+                            Year == "0006" ~ "2006",
+                            Year == "0007" ~ "2007",
+                            Year == "0008" ~ "2008",
+                            Year == "0009" ~ "2009",
+                            Year == "0010" ~ "2010",
+                            Year == "0011" ~ "2011",
+                            Year == "0012" ~ "2012",
+                            Year == "0013" ~ "2013",
+                            Year == "0014" ~ "2014",
+                            Year == "0015" ~ "2015",
+                            Year == "0016" ~ "2016",
+                            Year == "0017" ~ "2017",
+                            Year == "0018" ~ "2018",
+                            Year == "0019" ~ "2019")
+                            )
+
+inspection_data$Inspection_Date <- NULL
+
+#selecting required columns
+inspection_data_filtered <-  inspection_data %>% select(c(1,6,9,10,14,17,18,19,21,22))
+
+#Pulling data from 2014-2019
+inspection_data_filtered <- inspection_data_filtered %>% filter(Year %in% c('2014','2015','2016','2017','2018','2019'))
+
+
+#saving un-duplicated rows as per inspection serial number
+inspection_data_not_dup <- inspection_data_filtered[!duplicated(inspection_data_filtered$Inspection_Serial_Num),]
+
+```
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+# Median Inspection Score
+median_inspection_score <- inspection_data_not_dup %>% 
+  filter(Inspection_Score != 0) 
+
+```
+
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+# Percentage of red/blue/no violation for top 5 cities
+city_unique_business_inspection_year <- inspection_data_not_dup %>% 
+  group_by(Year, City) %>% 
+  summarise(count_businesses = n_distinct(Business_ID))
+
+city_none_count <- inspection_data_filtered %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type != "NONE"))) %>% 
+  filter(count == 0) %>% 
+  group_by(Year, City) %>% 
+  summarise(none = n())
+
+city_red_count_total <- inspection_data_filtered %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "RED"))) %>% 
+  filter(count != 0) 
+
+city_red_count <- city_red_count_total %>% 
+  group_by(Year, City) %>% 
+  summarise(red = n())
+
+city_blue_count_total <- inspection_data_filtered %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "BLUE"))) %>%
+  filter(count != 0)
+
+city_red_count_total <- city_red_count_total %>% select(-4) 
+city_blue_count_total <- city_blue_count_total %>% select(-4)
+
+
+intersect <- inner_join(city_red_count_total, city_blue_count_total)
+city_blue_count <- anti_join(city_blue_count_total, intersect, by = c('Year','City','Business_ID'))
+city_blue_count <- city_blue_count %>%
+              group_by(Year, City) %>%
+              summarise(blue = n())
+
+merged_violations <- merge(city_unique_business_inspection_year, city_none_count, by = c('Year','City'), all.x = TRUE)
+merged_violations <- merge(merged_violations, city_red_count, by = c('Year','City'), all.x = TRUE)
+merged_violations <- merge(merged_violations, city_blue_count, by = c('Year','City'), all.x = TRUE)
+
+merged_violations$none[is.na(merged_violations$none)] <- 0
+merged_violations$red[is.na(merged_violations$red)] <- 0
+merged_violations$blue[is.na(merged_violations$blue)] <- 0
+
+merged_violations <- merged_violations %>% gather(type, count, none:blue)
+merged_violations$rate <- round(merged_violations$count/merged_violations$count_businesses,4)
+merged_violations$label <- paste0(sprintf("%.0f", merged_violations$rate*100), "%")
+
+merged_violations_all_cities <- merged_violations %>% group_by(Year, type) %>% summarise(count_businesses = sum(count_businesses), count=sum(count))
+
+merged_violations_all_cities$rate <- round(merged_violations_all_cities$count/merged_violations_all_cities$count_businesses,4)
+merged_violations_all_cities$label <- paste0(sprintf("%.0f", merged_violations_all_cities$rate*100), "%")
+
+```
+
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+# Location of businesses with critical(red) violations 2014 - 2016
+any_violation_1 <- inspection_data_filtered %>%
+  filter(Year %in% c('2014','2015','2016')) %>% 
+  group_by(City, Business_ID, Inspection_Business_Name, Longitude, Latitude) %>%
+  summarise(count = length(which(Violation_Type == "RED" | Violation_Type == "BLUE"))) %>%
+  filter(count > 0)
+
+red_violation_1 <- inspection_data_filtered %>% 
+  filter(Year %in% c('2014','2015','2016')) %>% 
+  group_by(City, Business_ID, Inspection_Business_Name, Longitude, Latitude) %>%
+  summarise(count = length(which(Violation_Type == "RED"))) %>%
+  filter(count > 0)
+
+merge_violation_1 <- merge(any_violation_1, red_violation_1, by = c('City','Business_ID','Inspection_Business_Name','Latitude','Longitude'), all.x = TRUE)
+
+merge_violation_1$total_count <- merge_violation_1$count.x
+merge_violation_1$red_count <- merge_violation_1$count.y
+merge_violation_1$red_count[is.na(merge_violation_1$red_count)] <- 0
+merge_violation_1$count.x <- NULL
+merge_violation_1$count.y <- NULL
+
+blue_violation_1 <- inspection_data_filtered %>% 
+  filter(Year %in% c('2014','2015','2016')) %>% 
+  group_by(City, Business_ID, Inspection_Business_Name, Longitude, Latitude) %>%
+  summarise(count = length(which(Violation_Type == "BLUE"))) %>%
+  filter(count > 0 )
+
+merge_violation_1 <- merge(merge_violation_1, blue_violation_1, by = c('City','Business_ID','Inspection_Business_Name','Latitude','Longitude'), all.x = TRUE)
+
+merge_violation_1$blue_count <-  merge_violation_1$count
+merge_violation_1$count <- NULL
+merge_violation_1$blue_count[is.na(merge_violation_1$blue_count)] <- 0
+merge_violation_1 <- merge_violation_1 %>% filter(red_count >= 5)
+
+#find out closed businesses in 2014-2016
+closed_businesses_1 <- inspection_data_filtered %>% 
+  filter(Year %in% c('2014','2015','2016')) %>% 
+  group_by(Business_ID, Inspection_Serial_Num) %>%
+  summarise(count_closed = length(which(Inspection_Closed_Business == "TRUE"))) %>%
+  filter(count_closed > 0) %>%
+  group_by(Business_ID) %>%
+  summarise(count_closed = n())
+
+merge_violation_1 <- merge(merge_violation_1, closed_businesses_1, by = c('Business_ID'), all.x = TRUE) 
+merge_violation_1$count_closed[is.na(merge_violation_1$count_closed)] <- 0
+
+
+# Location of businesses with critical violations 2017 - 2019
+any_violation_2 <- inspection_data_filtered %>%
+  filter(Year %in% c('2017','2018','2019')) %>% 
+  group_by(City, Business_ID, Inspection_Business_Name, Longitude, Latitude) %>%
+  summarise(count = length(which(Violation_Type == "RED" | Violation_Type == "BLUE"))) %>%
+  filter(count > 0)
+
+red_violation_2 <- inspection_data_filtered %>% 
+  filter(Year %in% c('2017','2018','2019')) %>% 
+  group_by(City, Business_ID, Inspection_Business_Name, Longitude, Latitude) %>%
+  summarise(count = length(which(Violation_Type == "RED"))) %>%
+  filter(count > 0)
+
+merge_violation_2 <- merge(any_violation_2, red_violation_2, by = c('City','Business_ID','Inspection_Business_Name','Latitude','Longitude'), all.x = TRUE)
+
+merge_violation_2$total_count <- merge_violation_2$count.x
+merge_violation_2$red_count <- merge_violation_2$count.y
+merge_violation_2$red_count[is.na(merge_violation_2$red_count)] <- 0
+merge_violation_2$count.x <- NULL
+merge_violation_2$count.y <- NULL
+merge_violation_2 <- merge_violation_2 %>% filter(red_count >= 5)
+
+blue_violation_2 <- inspection_data_filtered %>% 
+  filter(Year %in% c('2017','2018','2019')) %>% 
+  group_by(City, Business_ID, Inspection_Business_Name, Longitude, Latitude) %>%
+  summarise(count = length(which(Violation_Type == "BLUE"))) %>%
+  filter(count > 0 )
+
+merge_violation_2 <- merge(merge_violation_2, blue_violation_2, by = c('City','Business_ID','Inspection_Business_Name','Latitude','Longitude'), all.x = TRUE)
+
+merge_violation_2$blue_count <- merge_violation_2$count
+merge_violation_2$count <- NULL
+merge_violation_2$blue_count[is.na(merge_violation_2$blue_count)] <- 0
+
+
+#find out closed businesses in 2017-2019
+closed_businesses_2 <- inspection_data_filtered %>% 
+  filter(Year %in% c('2017','2018','2019')) %>% 
+  group_by(Business_ID, Inspection_Serial_Num) %>%
+  summarise(count_closed = length(which(Inspection_Closed_Business == "TRUE"))) %>%
+  filter(count_closed > 0) %>%
+  group_by(Business_ID) %>%
+  summarise(count_closed = n())
+
+merge_violation_2 <- merge(merge_violation_2, closed_businesses_2, by = c('Business_ID'), all.x = TRUE) 
+merge_violation_2$count_closed[is.na(merge_violation_2$count_closed)] <- 0
+
+```
+
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+<font size = "2" color = "grey"> We have analyzed the performance of restaurants since the adoption of new rating system in 2017. We have mainly looked at their food inspection scores and critical(red) violations. The analysis can be done individually on 5 major cities which have the maximum number of restaurants in King County (Select from dropdown:) </font>
+
+```{r}
+selectInput("city", "City",choices = c("ALL CITIES","BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON"),
+selected = "ALL")
+```
+
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+
+
+<font size = "2" color = "grey"> Which area had the most critical(red) violations? (Move the slider to find out:) </font>
+
+```{r}
+sliderInput('violations','Critical Violations', min=5, max=30,value=5, step=5, round=0)
+```
+
+<br>
+
+```{r}
+checkboxInput('closed', "Select for closed restaurants", value = FALSE)
+
+```
+
+<br>
+<br>
+<font size = "2" color = "grey"> Click to find details about the restaurant </font>
+
+Column
+-----------------------------------------------------------------------
+### <font color="black" size = 2.5> Has the median inspection score been affected since the new rating system? </font>
+
+```{r}
+renderPlot({
+        datasetInput <- median_inspection_score
+        
+        if(input$city != "ALL CITIES"){
+            datasetInput <- median_inspection_score %>%
+            filter(City == input$city)
+        }
+        
+        p <- datasetInput %>% 
+        group_by(Year) %>% 
+        summarise(score = median(Inspection_Score)) %>% 
+        ggplot(mapping = aes(x = Year, y = score, fill = Year)) + 
+        geom_bar(stat = "identity", aes(alpha = 0.6)) +
+        geom_point() +
+        geom_line(group = 1) +
+        geom_vline(xintercept = 3.5, linetype="dotted", color = "dark grey", size=1) +
+        #annotate("text", x = 3.9, y = 1, label = "New Rating \nSystem", size = 3, color = "black") +
+        theme(legend.position = 'none',axis.title.x = element_blank(),plot.title = element_text(size = 12), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), legend.text = element_text(size = 8)) 
+          
+        if(input$city == "SEATTLE"){
+        p + 
+      scale_fill_manual(values = c('grey40','grey40','grey60','grey80','grey80','grey80')) +
+      labs(title = "There was a sharp decline in the median inspection score of Seattle restaurants in 2017 which has \nremained consistent since then", y = "Median Inspection Score")
+        }
+        else if(input$city == "BELLEVUE"){
+        p + 
+      scale_fill_manual(values = c('grey40','grey40','grey40','grey40','grey40','grey40')) +
+      labs(title = "The median inspection score of Bellevue restaurants has not been affected", y = "Median Inspection Score")
+        }
+        else if(input$city == "KENT"){
+        p + 
+      scale_fill_manual(values = c('grey40','grey40','grey40','grey40','grey40','grey40')) +
+      labs(title = "The median inspection score of Kent restaurants has not been affected", y = "Median Inspection Score")
+        }
+        else if(input$city == "RENTON"){
+        p + 
+      scale_fill_manual(values = c('grey40','grey40','grey40','grey40','grey60','grey60')) +
+      labs(title = "The median inspection score of Renton restaurants declined in 2018 which has remained consistent \nsince then", y = "Median Inspection Score")
+        }
+        else if(input$city == "FEDERAL WAY"){
+        p + 
+      scale_fill_manual(values = c('grey40','grey40','grey40','grey40','grey40','grey40')) +
+      labs(title = "The median inspection score of Federal Way restaurants has not been affected", y = "Median Inspection Score")
+        }
+        else{        
+        p + 
+      scale_fill_manual(values = c('grey40','grey40','grey40','grey60','grey60','grey60')) +
+      labs(title = "There was a sharp decline in the median inspection score of King County restaurants in 2017 which \nhas remained consistent since then", y = "Median Inspection Score")
+        }
+
+})
+```
+
+
+### <font color="black" size = 2.5> Has the number of restaurants with critical(red) violations been affected since the new rating system? </font>
+```{r}
+
+renderPlot({
+        datasetInput <- merged_violations_all_cities
+        
+        if(input$city != "ALL CITIES"){
+            datasetInput <- merged_violations %>%
+            filter(City == input$city)
+        }
+        p <- datasetInput %>%
+        ggplot(mapping = aes(x = Year, y = rate, fill = factor(type, levels = c('blue','red','none')))) +
+        geom_bar(position = position_stack(), stat = "identity", width = 0.7) +
+        geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3.5)+
+        coord_flip() +
+        geom_vline(xintercept = 3.5, linetype="dotted", color = "dark grey", size=1) +
+        scale_fill_manual(values = c('steelblue4','red4','snow4'), name = "Violation Type:", labels = c("Blue","Red","None")) +
+        theme(legend.position = 'top',axis.title.y = element_blank(), axis.title.x = element_blank(), plot.title = element_text(size = 12), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.title = element_text(size = 8), legend.text = element_text(size = 8)) +
+        guides(fill = guide_legend(reverse = TRUE))
+      
+        if(input$city == "SEATTLE"){
+        p + 
+      labs(title = "Seattle had a significant decline in percentage of restaurants with red violations since 2017", y = "Median Inspection Score")
+        }
+        else if(input$city == "BELLEVUE"){
+        p + 
+      labs(title = "Bellevue had a significant decline in percentage of restaurants with red violations since 2017", y = "Median Inspection Score")
+        }
+        else if(input$city == "KENT"){
+        p + 
+      labs(title = "Kent has not had a significant impact on percentage of restaurants with red violations since 2017", y = "Median Inspection Score")
+        }
+        else if(input$city == "RENTON"){
+        p + 
+      labs(title = "Renton has not had a significant impact on percentage of restaurants with red violations since 2017", y = "Median Inspection Score")
+        }
+        else if(input$city == "FEDERAL WAY"){
+        p + 
+      labs(title = "Federal Way had a significant decline in percentage of restaurants with red violations since 2017", y = "Median Inspection Score")
+        }
+        else{        
+        p + 
+      labs(title = "King County had a significant decline in percentage of restaurants with red violations since 2017", y = "Median Inspection Score")
+        }
+})
+
+```
+
+Row
+-----------------------------------------------------------------------
+### <font color="black" size = 2.5> Which areas had the most critical violations between 2014 - 2016 (prior to new rating system)? </font>
+```{r}
+      icons <- awesomeIcons(
+      icon = 'bolt',
+      iconColor = 'white',
+      markerColor = "red",
+      library = 'fa'
+      )
+      
+      renderLeaflet({
+      datasetInput <- merge_violation_1 %>%
+        filter(red_count >= input$violations)
+
+        if(input$city != "ALL CITIES"){
+          datasetInput <- datasetInput %>%
+          filter(City == input$city)
+        }
+
+        if(input$closed == TRUE){
+          datasetInput <- datasetInput %>%
+          filter(count_closed > 0)
+        }
+      
+        leaflet(data = datasetInput) %>%
+        addTiles(
+          urlTemplate = "//{s}.tiles.mapbox.com/v3/jcheng.map-5ebohr46/{z}/{x}/{y}.png",
+          attribution = 'Maps by <a href="http://www.mapbox.com/">Mapbox</a>'
+        ) %>%
+        addControl("2014-2016", position = "topright") %>%
+        #setView(lng = -122.33, lat = 47.6200, zoom = 11) %>%
+        addAwesomeMarkers(icon = icons,  ~Longitude, ~Latitude, popup  = ~as.character(paste0("<strong>",Inspection_Business_Name,"</strong>","<br>",'Red: ',red_count,"<br>",'Blue: ',blue_count,"<br>", 'Closed: ',count_closed, ' time(s)')))
+    })
+```
+
+### <font color="black" size = 2.5> Which areas had the most critical violations between 2017 - 2019 (post new rating system)? </font>
+```{r}
+
+icons <- awesomeIcons(
+      icon = 'bolt',
+      iconColor = 'white',
+      markerColor = "red",
+      library = 'fa'
+      )
+
+    renderLeaflet({
+    datasetInput <- merge_violation_2 %>%
+      filter(red_count >= input$violations)
+
+        if(input$city != "ALL CITIES"){
+          datasetInput <- datasetInput %>%
+          filter(City == input$city)
+        }
+
+        if(input$closed == TRUE){
+          datasetInput <- datasetInput %>%
+          filter(count_closed > 0)
+        }
+
+        icons <- awesomeIcons(
+        icon = 'bolt',
+        iconColor = 'white',
+        markerColor = "red",
+        library = 'fa'
+        )
+
+        leaflet(data = datasetInput) %>%
+        addTiles(
+          urlTemplate = "//{s}.tiles.mapbox.com/v3/jcheng.map-5ebohr46/{z}/{x}/{y}.png",
+          attribution = 'Maps by <a href="http://www.mapbox.com/">Mapbox</a>'
+        ) %>%
+      addControl("2017-2019", position = "topright") %>%
+      #setView(lng = -122.33, lat = 47.6200, zoom = 11) %>%
+      addAwesomeMarkers(icon = icons, ~Longitude, ~Latitude, popup  = ~as.character(paste0("<strong>",Inspection_Business_Name,"</strong>","<br>",'Red: ',red_count,"<br>",'Blue: ',blue_count,"<br>", 'Closed: ',count_closed, ' time(s)')))
+
+})
+```
+
+

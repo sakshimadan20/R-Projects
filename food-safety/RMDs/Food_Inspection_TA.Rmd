@@ -1,0 +1,1444 @@
+---
+title: "King County Food Inspection"
+description: |
+    Technical Appendix.
+author:
+  - name: Sakshi Madan 
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    code_download: yes
+    df_print: kable
+    keep_md: yes
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r options}
+# Course: 5210 Communicating Data
+# Purpose: Technical Appendix of King County Food Inspection
+# Author: Sakshi Madan 
+
+# define default values for code chunks
+knitr::opts_chunk$set(message = FALSE, dpi=300)
+
+```
+
+# Loading Packages
+```{r setup, warning = FALSE}
+# Clear environment
+rm(list = ls(all = TRUE))
+
+# Clear environmet of packages
+if(is.null(sessionInfo()$otherPkgs) == FALSE)
+  lapply(paste("package:", names(sessionInfo()$otherPkgs), sep=""),
+         detach, character.only = TRUE, unload = TRUE)
+
+# Load Packages
+library(tidyverse) # used to make plots
+library(here) # easier way to find file path
+library(gridExtra) # used to put graphs together in the same frame
+library(magrittr) # enables %<>%
+library(kableExtra) # to make tables look better
+library(qwraps2) # nicer summary
+library(janitor) # cleaning dirty data
+library(rcompanion) # to run pairwiseMedianTest function in the rcompanion package, which conducts Mood’s median test on all pairs of groups from one-way data
+```
+
+# Importing database
+```{r importing_db, warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data <- read_csv(here('Sample_Food_Inspection_Data.csv'))
+
+inspection_data  %>% head() %>% kable() %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F) %>% scroll_box(width = "100%", height = "600px")
+
+```
+
++ __About the dataset:__
+  - Each row in this dataset is an inspection, and if an inspection at a particular restaurant results in multiple violations, there will be multiple rows for that restaurant with the same inspection serial number
+  - Data is collected from January 1st 2006 until November 13th 2019
+  
++ __First observations:__
+  - The data is in a tidy format
+  - There are `r nrow(inspection_data)` observations and `r ncol(inspection_data)` variables in the data set
+  
++ __Variables explanation:__
+  - Name: Official name of the restaurant being inspected (Need to be a factor)  
+  - Program Identifier: Name of the restaurant being inspected (Need to be a factor)  
+  - Inspection Date: Date of the food inspection (Need to be date format)  
+  - Description: Based on the seating number and risk categories: (Need to be a factor)    
+                - Risk Category I: They do not prepare food on site    
+                - Risk Category II: They assemble food on site, do not prepare from scratch    
+                - Risk Category III: They prepare food from scratch and are more complex  
+  - Address: Address of the restaurant being inspected (Need to be a factor)  
+  - City: City in which restaurant being inspected is located (Need to be a factor)  
+  - Zipcode: Zipcode where restaurant being inspected is located (Need to be a factor)  
+  - Phone: Phone number of the restaurant being inspected (Need to be a factor)  
+  - Longitude: Longitudinal coordinates of the restaurant site  
+  - Latitude: Latitudinal coordinates of the restaurant site  
+  - Inspection Business Name: Same as official restaurant name being inspected (Need to be a factor)  
+  - Inspection Type: (Need to be a factor)  
+                - Routine Inspection/Field Review: Scored and unannounced inspections  
+                - Return Inspection: Occur as needed to address violations observed during routine     
+                  observations  
+                - Consultation/Education: Many restaurants receive an unscored consultation/educational visits                     each year  
+  - Inspection Score: Cumulative for all violation points for each inspection serial number(Max 400). Higher the score, more the violations occured.Scores over 35 may result in a return inspection (Need to be a Numeric)   
+  - Inspection Result: (Need to be a factor)    
+                - Multiple categories like satisfactory, unsatisfactory, complete, incomplete  
+  - Inspection Closed Business: (Need to be a factor)  
+                - TRUE: If the restaurant was closed due to not meeting minimum standards  
+                - FALSE: If the restaurant met minimum standards  
+  - Violation Type: (Need to be a factor)  
+                - BLUE: Not much critical violations like maintainance and sanitation issues with the restaurant  
+                - RED: Critical violations leading to food-borne diseases  
+  - Violation Description: Different types of violations like: (Need to be a factor)  
+                - 4100: Warewashing facilities properly installed  
+                - 3400: Wiping cloths properly used, stored, proper sanitizer, and more  
+  - Violation Points: Score for each violation (Need to be a numeric)  
+  - Business_ID: Identifier of the restaurant (Need to be a factor)  
+  - Inspection_Serial_Num: Unique number for each inspection. They can be multiple if there are more than 1 violations in one inspection.  (Need to be a factor)  
+  - Violation_Record_ID: Identifier for each violation record (Need to be a factor)  
+  - Grade: These grades are calculated based on Zipcodes: (Need to be a factor)  
+                - 1: Excellent (When No/few red critical violations have occurred)    
+                - 2: Good ( When some red critical violations have occurred)  
+                - 3: Okay (When many red critical violations have occurred)  
+                - 4: Needs to improve (Either the restaurant closed within last year or restaurant needed multiple                      inspections to fix safety practices, this is not adjusted by zipcode)  
+
+# Adjusting data
+```{r adjusting, warning=FALSE, echo=FALSE, message=FALSE}
+# Separting columns Description  and Violation Description into two columns each
+inspection_data$Seating <- as.factor((inspection_data %>%separate(Description, c('Seating','Risk Category'), sep = " - Risk "))$Seating)  
+
+inspection_data$Risk_Category <- as.factor((inspection_data %>%separate(Description, c('Seating','Risk Category'), sep = " - "))$`Risk Category`)  
+
+inspection_data$Violation_Number <- as.factor((inspection_data %>% separate(`Violation Description`, c('Violation Number','Violation Description'), sep = " - "))$`Violation Number`)  
+
+inspection_data$Violation_Description <- as.factor((inspection_data %>% separate(`Violation Description`, c('Violation Number','Violation Description'), sep = " - "))$`Violation Description`)  
+
+# Restructuring risk categories
+inspection_data %<>% mutate(Risk_Category = case_when(
+                            Risk_Category == "Risk Category I" ~ "Risk Category I",
+                            Risk_Category == "Risk II" ~ "Risk Category II",
+                            Risk_Category == "Risk Category II" ~ "Risk Category II",
+                            Risk_Category == "Risk II&III" ~ "Risk Category II",
+                            Risk_Category == "Risk Category III" ~ "Risk Category III",
+                            Risk_Category == "no permanent plumbing" ~ "Risk Category I")
+                            )  
+
+# Adjusting data types and names of the variables
+inspection_data <- inspection_data %>% 
+                            mutate(Name =  as.factor(Name), #NA = 0
+                            Program_Identifier = as.factor(`Program Identifier`), #NA = 1 
+                            Inspection_Date =  as.Date(`Inspection Date`, "%m/%d/%Y"), #NA = 530
+                            Address =  as.factor(Address), #NA = 0
+                            City =  as.factor(toupper(City)), #NA = 0
+                            ZipCode =  as.factor(`Zip Code`), #NA = 1
+                            Phone =  as.factor(Phone), #NA = 82064
+                            Inspection_Business_Name =  as.factor(`Inspection Business Name`), #NA = 530
+                            Inspection_Type =  as.factor(`Inspection Type`), #NA = 530
+                            Inspection_Score =  as.numeric(`Inspection Score`), #NA = 584
+                            Inspection_Result =  as.factor(`Inspection Result`),#NA = 530
+                            Inspection_Closed_Business =  as.factor(`Inspection Closed Business`), #NA = 530
+                            Violation_Type =  as.factor(`Violation Type`), #NA = 118917
+                            Violation_Points =  as.numeric(`Violation Points`), #NA = 0
+                            Business_ID =  as.factor(Business_ID), #NA = 0
+                            Inspection_Serial_Num =  as.factor(Inspection_Serial_Num), #NA = 530
+                            Violation_Record_ID =  as.factor(Violation_Record_ID), #NA = 118917
+                            Grade =  as.factor(Grade), #NA = 59362
+                            Risk_Category = as.factor(Risk_Category) #NA = 0
+                            )
+
+
+#Variables - Name, Program Indentifier and Inspection Business Name share the same data, so we are going to keep only the program identifier and remove the other two, alos emptying the previous column names
+inspection_data$Name <- NULL
+inspection_data$`Program Identifier` <- NULL
+inspection_data$`Inspection Date` <- NULL
+inspection_data$`Zip Code` <- NULL
+inspection_data$`Inspection Business Name` <- NULL
+inspection_data$Inspection_Business_Name <- NULL
+inspection_data$`Inspection Type` <- NULL
+inspection_data$`Inspection Result` <- NULL
+inspection_data$`Inspection Score` <- NULL
+inspection_data$`Inspection Closed Business` <- NULL
+inspection_data$`Violation Type` <- NULL
+inspection_data$`Violation Points` <- NULL
+inspection_data$Description <- NULL   
+inspection_data$`Violation Description` <- NULL  
+
+#Looking for 530 rows where inspection serial number is NA and will drop those rows
+inspection_data <- inspection_data %>% drop_na(Inspection_Serial_Num)
+
+#Dropping 1 row where Program Identifier is NA
+inspection_data <- inspection_data %>% drop_na(Program_Identifier)
+
+#Dropping 1 row where Zipcode is NA
+inspection_data <- inspection_data %>% drop_na(ZipCode)
+
+#Create factors for NA values 
+
+#Factor level 'Missing' for remaining 82031 NA phone values and 58902 NA grade values
+inspection_data$Phone <- fct_explicit_na(inspection_data$Phone)
+inspection_data$Grade <- fct_explicit_na(inspection_data$Grade)
+
+#Factor level 'NONE' for violation numbers, violation descriptions, violation types,violation record IDs (NA = 118386)
+inspection_data$Violation_Type <- fct_explicit_na(inspection_data$Violation_Type, na_level = "NONE")
+inspection_data$Violation_Record_ID <- fct_explicit_na(inspection_data$Violation_Record_ID, na_level = "NONE")
+inspection_data$Violation_Number <- fct_explicit_na(inspection_data$Violation_Number, na_level = "NONE")
+inspection_data$Violation_Description <- fct_explicit_na(inspection_data$Violation_Description, na_level = "NONE")
+
+#We still have 54 rows where inspection scores are NA, creating a new table for them
+na_score <- inspection_data[is.na(inspection_data$Inspection_Score),] %>% select(7,18)
+#Drop rows with duplicate inspection serial number
+na_score <- na_score[!duplicated(na_score$Inspection_Serial_Num),]
+
+#Looking for those inspection serial numbers with NA inspection score in the original table and summing their violation points to find out inspection score
+for (row in 1:nrow(na_score)) {
+  df <- inspection_data[inspection_data$Inspection_Serial_Num == na_score[row, "Inspection_Serial_Num"]$Inspection_Serial_Num,]
+  score <- sum(df$Violation_Points)
+  na_score[row, "Inspection_Score"]$Inspection_Score <- score
+}
+
+#Merging both the tables na_score and inspection_data
+inspection_data <- merge(inspection_data,na_score, by = c('Inspection_Serial_Num'), all.x = TRUE)
+inspection_data$Inspection_Score.x[is.na(inspection_data$Inspection_Score.x)] <- inspection_data$Inspection_Score.y[is.na(inspection_data$Inspection_Score.x)]
+
+na_score <- NULL
+inspection_data$Inspection_Score <- inspection_data$Inspection_Score.x
+inspection_data$Inspection_Score.x <- NULL
+inspection_data$Inspection_Score.y <- NULL
+
+# Looking for those rows where inspection score < 0
+negative_values <- inspection_data %>% 
+  filter(Inspection_Score < 0) %>% 
+  select(1,22)
+
+for (row in 1:nrow(negative_values)) {
+  df <- inspection_data[inspection_data$Inspection_Serial_Num == negative_values[row, "Inspection_Serial_Num"],]
+  score <- sum(df$Violation_Points)
+  negative_values[row, "Inspection_Score"] <- score
+}
+
+#Merging both the tables negative_values and inspection_data
+inspection_data <- merge(inspection_data,negative_values, by = c('Inspection_Serial_Num'), all.x = TRUE)
+inspection_data$Inspection_Score.x[inspection_data$Inspection_Score.x < 0] <- inspection_data$Inspection_Score.y[inspection_data$Inspection_Score.x < 0]
+
+negative_values <- NULL
+inspection_data$Inspection_Score <- inspection_data$Inspection_Score.x
+inspection_data$Inspection_Score.x <- NULL
+inspection_data$Inspection_Score.y <- NULL
+
+#Working on inspection date
+inspection_data$Year <- format(inspection_data$Inspection_Date,"%Y")
+inspection_data$Month <- format(inspection_data$Inspection_Date,"%m")
+
+inspection_data %<>% mutate(Year = case_when(
+                            Year == "0006" ~ "2006",
+                            Year == "0007" ~ "2007",
+                            Year == "0008" ~ "2008",
+                            Year == "0009" ~ "2009",
+                            Year == "0010" ~ "2010",
+                            Year == "0011" ~ "2011",
+                            Year == "0012" ~ "2012",
+                            Year == "0013" ~ "2013",
+                            Year == "0014" ~ "2014",
+                            Year == "0015" ~ "2015",
+                            Year == "0016" ~ "2016",
+                            Year == "0017" ~ "2017",
+                            Year == "0018" ~ "2018",
+                            Year == "0019" ~ "2019")
+                            )
+
+inspection_data$Inspection_Date <- NULL
+
+#Rearranging the columns
+inspection_data <- inspection_data[,c(14,7,2,4,3,15,5,6,22,23,16,21,17,18,1,19,12,13,8,20,10,11,9)]
+str(inspection_data)
+```
+
++ __About the dataset:__
+  - After cleaning, we now have `r inspection_data %>% nrow` observations and `r inspection_data %>% ncol` variables 
+ 
+# Base EDA 
+
+## Uni-variate non-graphical EDA 
+
+### Variables which do not need for us to remove duplicates based on inspection serial number 
+```{r summary, warning = FALSE, echo=FALSE, message=FALSE}
+inspection_data  %>% select(Violation_Type, Violation_Number, Violation_Description, Violation_Record_ID, Violation_Points) %>% summary() 
+```
+
++ __Findings:__
+  - BLUE violations have occurred `r round((inspection_data %>% filter(Violation_Type == 'BLUE') %>% nrow())/(inspection_data %>% nrow())*100,2)`% of times. RED violations have occured `r round((inspection_data %>% filter(Violation_Type == 'RED') %>% nrow())/(inspection_data %>% nrow())*100,2)`% of times. No violations occurred `r round((inspection_data %>% filter(Violation_Type == 'NONE') %>% nrow())/(inspection_data %>% nrow())*100,2)`% of times.  
+  - There are various types of violations occurring categorized by Violation_Number and their corresponding decriptions under Violation_Description  
+  - For violation points, I am going to consider median `r median(inspection_data$Violation_Points)` as the measure of central tendency since the distribution is skewed  
+
+### Variables which need for us to remove duplicates based on inspection serial number 
+```{r}
+inspection_data_not_dup <- inspection_data[!duplicated(inspection_data$Inspection_Serial_Num),]
+
+inspection_data_not_dup %>% select(-Violation_Type, -Violation_Number, -Violation_Description, -Violation_Record_ID, -Violation_Points) %>% summary()
+```
+
++ __Findings:__
+  - There are `r length(unique(inspection_data$Program_Identifier))` unique restaurants being inspected by King County for food safety    
+  - There are `r length(unique(inspection_data$City))` cities covered by King County for Food                     Inspections. Few of which are Seattle, Bellevue, Kent, Renton, Federal Way, Redmond and many more  
+  - Almost half of the inspections `r round((inspection_data_not_dup %>% filter(City == 'SEATTLE') %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% are carried out in Seattle   
+  - Inspections are carried out across `r length(unique(inspection_data$ZipCode))` Zipcodes in King County  
+  - We also have coordinates available for all the restaurants being inspected  
+  - The data is beginning from January 2006 until mid November 2019  
+  - `r round((inspection_data_not_dup %>% filter(Inspection_Type == "Routine Inspection/Field Review") %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% of inspections carried out by King County are Routine/Field Reviews  
+  - Mean and median of inspection score are different, which means the data is skewed so we will be using median as the measure of central tendency  
+  - The inspection has been satisfactory `r round((inspection_data_not_dup %>% filter(Inspection_Result == "Satisfactory") %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% of times. The inspection has been unsatisfactory `r round((inspection_data_not_dup %>% filter(Inspection_Result == "Unsatisfactory") %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% of times. The inspection has been complete `r round((inspection_data_not_dup %>% filter(Inspection_Result == "Complete") %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% of times.   
+  - The restaurants are closed `r round((inspection_data_not_dup %>% filter(Inspection_Closed_Business == TRUE) %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% of times, which means they did not meet minimum health standards during the inspection. It is possible that they could have been reopened again.  
+  - Out of unique `r inspection_data_not_dup %>% nrow()` inspections, `r round((inspection_data_not_dup %>% filter(Seating == 'Seating 13-50') %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% are carried out on restaurants with Seating 13-50. `r round((inspection_data_not_dup %>% filter(Seating == 'Seating 0-12') %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% are carried out on restaurants with Seating 0-12 and `r round((inspection_data_not_dup %>% filter(Seating == 'Seating 51-150') %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`% are carried out on restaurants with Seating 51-150. Remaining restaurant types are School Lunch Programs, Meat/Seafood, Grocery Stores - no seating, Seating 151-250 and few more.  
+  - Maximum restaurants being inspected are under Risk Category III (which prepare food from scratch - `r round((inspection_data_not_dup %>% filter(Risk_Category == 'Risk Category III') %>% nrow())/(inspection_data_not_dup %>% nrow())*100,2)`%)    
+  - Out of `r inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% nrow()` restaurants, `r round((inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% filter(Grade == 1) %>% nrow())/(inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% nrow())*100,2)`% are graded 1, `r round((inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% filter(Grade == 2) %>% nrow())/(inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% nrow())*100,2)`% are graded 2 and `r round((inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% filter(Grade == 3) %>% nrow())/(inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% nrow())*100,2)`% are graded 3. We do not have grades for `r round((inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% filter(Grade == '(Missing)') %>% nrow())/(inspection_data %>% group_by(Program_Identifier, Grade) %>% summarise(count = n()) %>% nrow())*100,2)`% of restaurants As mentioned before, these grades are calculated within the same zipcodes.   
+
+## Uni-variate graphical EDA 
+ - Histograms and Boxplots for quantitative variables - Inspection Score and Violation Points  
+ - Bar graphs for factor variables
+
+### Inspection Score  
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of quantitative variable - inspection score
+
+unique_inspection_data <- inspection_data_not_dup
+grid.arrange(unique_inspection_data %>% 
+               ggplot(mapping = aes(x = Inspection_Score)) + 
+               geom_histogram(),
+             unique_inspection_data %>% 
+               ggplot(mapping = aes(x = 1, y = Inspection_Score)) + 
+               geom_boxplot() + 
+               coord_flip(),
+             ncol = 1)
+```
+  
+  
+ - The inspection score seems to be skewed towards left, thus we are going to consider median as the measure of central tendency  
+ - There are a lot of outliers with inspection score greater than 25
+
+### Violation Points  
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of quantitative variable - violation points
+
+grid.arrange(inspection_data %>% 
+               ggplot(mapping = aes(x = Violation_Points)) + 
+               geom_histogram(),
+             inspection_data %>% 
+               ggplot(mapping = aes(x = 1, y = Violation_Points)) + 
+               geom_boxplot() + 
+               coord_flip(),
+             ncol = 1)
+
+```
+
+ - There are gaps in the distribution of violation points
+ - Most of the inspections had 0 violation points, followed by 5 and 10
+ 
+
+### City  
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - City
+inspection_data_not_dup %>% 
+  ggplot(mapping = aes(x = City)) + 
+  geom_bar()
+```
+
+ - There are `r length(unique(inspection_data$City))` cities in which inspections are carried out by King County
+
+### Zipcode
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - Zipcode
+inspection_data_not_dup %>% 
+  ggplot(mapping = aes(x = ZipCode)) + 
+  geom_bar()
+```
+ 
+ - There are `r length(unique(inspection_data$ZipCode))` zipcodes in which inspections are carried out by King County
+ 
+### Inspection Type 
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - Inspection Type
+inspection_data_not_dup %>% 
+  ggplot(mapping = aes(x = Inspection_Type)) + 
+  geom_bar() + 
+  coord_flip()
+```
+  
+ - Maximum inspections being carried out in King County are for Inspection / Field Review, followed by Consultation and Education
+ - We can look at what % of restaurants require return inspection?
+
+### Inspection Result 
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - Inspection Result
+inspection_data_not_dup %>%
+  ggplot(mapping = aes(x = Inspection_Result)) + 
+  geom_bar() + 
+  coord_flip()
+```
+
+ - Most of the inspections carried out were satisfactory followed by unsatisfactory and complete  
+ - We will be looking at these categories from here on since we do not have a lot of data for other categories  
+ - What factors does the inspection result depend on? What are the range of inspection scores in various categories for inspection result?  
+
+### Inspection Closed Business 
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - Inspection Closed Business
+inspection_data_not_dup %>% 
+  ggplot(mapping = aes(x = Inspection_Closed_Business)) + 
+  geom_bar() + 
+  coord_flip()
+```
+
+ - Most of the times the restaurant did not close
+ - What caused a restaurant to close? 
+
+### Violation Type
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - Violation Type
+inspection_data %>% 
+  ggplot(mapping = aes(x = Violation_Type)) + 
+  geom_bar()
+```
+
+ - There are more RED violations than BLUE.
+ - Also, restaurants have not violated maximum number of times
+
+### Violation Number 
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variables - Violation Number (Similar would be for violation description)
+inspection_data %>% 
+  ggplot(mapping = aes(x = Violation_Number)) + 
+  geom_bar() + 
+  coord_flip()
+```
+
+ - We can look at which violation numbers are occurring the most? Are there patterns of violation numbers during different months?
+ - Same distribution for violation description
+  
+### Seating
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - Seating
+inspection_data_not_dup %>% 
+  ggplot(mapping = aes(x = Seating)) + 
+  geom_bar() + 
+  coord_flip()
+```
+
+ - Most of the restaurants being inspected for food safety in King County are with Seating 13 - 50, followed by Seating 51 - 150, followed by Seating 0 - 12  
+ - Does the violations vary by Seating types?
+ - Are the inspection scores higher for more seating restaurants?
+  
+### Risk Category
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - Risk Category
+inspection_data_not_dup %>% 
+  ggplot(mapping = aes(x = Risk_Category)) + 
+  geom_bar() + 
+  coord_flip()
+```
+
+ - Maximum restaurants being inspected for food safety fall under Risk Category III which means they prepare food from scratch
+  
+### Grade
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+# Uni-variate graphical analysis of factor variable - Grade
+inspection_data_not_dup %>% 
+  ggplot(mapping = aes(x = Grade)) + 
+  geom_bar() + 
+  coord_flip()
+```
+
+ - Most of the restaurants are graded 1 by county
+ - We have a lot of missing data for grades
+
+### Findings
+ - There are more of Red violations than blue
+ - Almost half of the inspections are carried out in Seattle
+ - Most of the inspections are routine and field reviews
+ 
+### Questions
+ - Does inspection score varies with Cities?
+ - Does violation points distribution stay the same across Cities?
+ - What is the relation between inspection result and inspection score?
+ - Is there any sepcific type of violation ocurring in particular area or particular month?
+ - How many restaurants need return inspection?
+ - How are restaurants performing over time?
+ - What caused the restaurants to close?
+ - Does more Seatings increase violations/inspection score?
+ - What caused the restaurant to be graded 1?
+
+## Multi-variate non-graphical analysis
+
+### Inspection Type x Inspection Result
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>% 
+  tabyl(Inspection_Type, Inspection_Result) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns()  %>% 
+  select(c('Inspection_Type','Complete','Satisfactory','Unsatisfactory')) %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+ - Routine inspections have mostly satisfactory results followed by unsatisfactory
+ - Consultation/Education inspections have mostly results as 'Complete'
+ - Return inspections have mostly been satisfactory follwed by unsatisfactory
+ - What causes a return inspection to be unsatisfactory?
+ - How many restaurants get return inspections / unsatisfactory results every year?
+ 
+### Inspection Type x Closed Business
+
+```{r}
+inspection_data_not_dup %>% 
+  tabyl(Inspection_Type, Inspection_Closed_Business) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  select(c(1,2,3)) %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+ - It looks like restaurants are three times more likely to be closed in return inspection than routine inspection  
+ 
+### Inspection Result x Closed Business
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>% 
+  tabyl(Inspection_Result, Inspection_Closed_Business) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>% 
+  filter(Inspection_Result %in% c("Complete","Satisfactory","Unsatisfactory","Total")) %>%
+  select(c(1,2,3)) %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+ - As expected, 91% of the restaurants closed had Unsatisfactory inspections
+ 
+### Seating x Inspection Result
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>% 
+  tabyl(Seating, Inspection_Result) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting()  %>%
+  adorn_ns() %>% select(c("Complete","Satisfactory","Unsatisfactory","Total")) %>%
+ kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+ - As the Seating increases, there is more percentage of unsatisfactory results within the group
+ - May be small restaurants have better quality control  
+ - As mentioned before, we are only looking at Satisfactory/Unsatisfactory and Complete inspection results  
+
+### Seating x Inspection Type
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>% 
+  tabyl(Seating, Inspection_Type) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>% 
+  select(c(1,2,3,4))%>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+ - Again, restaurants with more seating have more requirement of return inspections
+
+###  Seating x Inspection Closed Business
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>% 
+  tabyl(Seating, Inspection_Closed_Business) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>% 
+  select(c(1,2,3)) %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+ - Looks like mobile food units get closed a lot 
+ 
+### Seating x Risk Category
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>% 
+  tabyl(Seating, Risk_Category) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>% 
+  select(c(1,2,3,4))%>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+ - Grocery Stores form more than half of the Risk Category I restaurants  
+ - Risk Category II are dominated by restaurants with Seating 0-12 and 13-50
+
+###  Inspection Result x Violation Type 
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data %>% 
+  tabyl(Inspection_Result, Violation_Type) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  filter(Inspection_Result %in% c('Complete','Satisfactory','Unsatisfactory')) %>% 
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+ - Inspection results are unsatisfactory when there are RED violations mostly
+ - Inspection results are complete when there are no violations mostly
+
+### Seating x Violation Type
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data %>% 
+  tabyl(Seating, Violation_Type) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  select(1,2,3,4) %>%
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+
+```
+
+ - It appears that as the seating increases, the proportion of red violations increase 
+
+### Violation Type x Risk Category
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data %>% 
+  tabyl(Violation_Type, Risk_Category) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>% select(c(1,2,3,4)) %>% 
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+
+```
+
+ - Restaurants under Risk Category III have almost similar percentage of red and blue violations
+ 
+### City x Violation Type
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data %>% 
+  tabyl(City, Violation_Type) %>% 
+  adorn_totals(where = c("row", "col")) %>% 
+  adorn_percentages("row") %>%
+  adorn_pct_formatting() %>%
+  adorn_ns() %>%
+  filter(City %in% c('SEATTLE','BELLEVUE','KENT','FEDERAL WAY','RENTON')) %>% 
+  select(c(1,2,3,4)) %>% 
+  kable()%>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+
+```
+
+ - We looked at the top 5 cities with maximum number of restaurants and realized that Bellevue has more percentage of Red Violations than None which is the opposite of others  
+ - Does this pattern of Bellevue remain the same across the years?  
+ - Does this pattern of other cities remain the same across the years?  
+
+### Correlation Table
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data %>% 
+  group_by(Inspection_Serial_Num, Inspection_Score) %>% 
+  summarise(points = sum(Violation_Points)) %>% 
+  ungroup() %>% 
+  select(Inspection_Score, points) %>% 
+  cor()
+```
+
+- We can see that inspection score is very closely related to violation points because every score is a sum of independent violation points grouped by inspection serial number
+
++ __Findings and Questions__
+  - We found out that restaurants were closed on return inspections  
+  - As the Seating increases, proportion of red violations and return inspections increase  
+  - Inspection Score and Violation Points are very strongly related obviously  
+  - When looking at the top 5 cities with most restaurants in King County, we observed that Bellevue has more of red violations than blue  
+  - Does the trend of Red/Blue violations remain the same for cities across the years?
+  
+## Multi-variate graphical analysis
+
+### Number of inspections every year
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_year <- inspection_data_not_dup %>% 
+  group_by(Year) %>% 
+  summarise(count = n())
+
+ inspection_year%>%
+  filter(Year!='2019') %>%
+  ggplot(mapping = aes(y = count, x = Year)) +
+  geom_point() +
+  geom_line(group = 1) +
+  geom_bar(stat = "identity") 
+```
+ 
+ - Excluded 2019 data because its not for the complete year
+ - The number of inspections have been increasing every year except for 2015 where there was a drop
+ - The number of inspections in 2015 declined by `r round(-(inspection_year$count[10] - inspection_year$count[9])/inspection_year$count[9]*100,2)`% as compared to 2014 
+ - The number of inspections in 2017 increased by `r round((inspection_year$count[12] - inspection_year$count[11])/inspection_year$count[11]*100,2)`% as compared to 2016 which further increased by `r round((inspection_year$count[13] - inspection_year$count[12])/inspection_year$count[12]*100,2)`% in 2018
+
+### Number of unique restaurants being inspected every year
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+unique_business_inspection_year <- inspection_data_not_dup %>% 
+  group_by(Year) %>% 
+  summarise(count_businesses = n_distinct(Business_ID))
+
+unique_business_inspection_year %>%
+  filter(Year!='2019') %>%
+  ggplot(mapping = aes(y = count_businesses, x = Year)) +
+  geom_bar(stat = "identity") +
+  geom_point() +
+  geom_line(group = 1) 
+```
+ 
+ - Number of unique restaurants being inspected increased by `r round( (unique_business_inspection_year$count_businesses[10]-unique_business_inspection_year$count_businesses[9])/unique_business_inspection_year$count_businesses[9]*100,2)`% in 2015 as compared to 2014 but the decline of number of inspections could mean there was a decline in number of inspections per restaurant
+ - On the contrary in 2017, the rise in number of unique restaurants being inspected was `r round( (unique_business_inspection_year$count_businesses[12]-unique_business_inspection_year$count_businesses[11])/unique_business_inspection_year$count_businesses[11]*100,2)`% but the total number of inspections increased at a much higher rate, which could imply that there were increase in number of inspections per restaurant
+ 
+### Number of inspections per restaurant
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_per_business <- data.frame("Year" = inspection_year$Year, "ratio" = inspection_year$count / unique_business_inspection_year$count_businesses)
+
+as.data.frame(inspection_per_business) %>%
+  filter(Year !='2019') %>%
+  ggplot(mapping = aes(x = Year, y = ratio)) +
+  geom_bar(stat = "identity") +
+  geom_point() +
+  geom_line(group = 1)
+```
+
+ - As mentioned above, we can see a clear decline in the number of inspections per restaurant in 2015, continued to 2016 as well
+ - The number of inspections per restaurant increased to `r round(inspection_per_business$ratio[13])` in 2017
+ - There is a clear decline in number of inspections per restaurant from 2006 to 2018
+ 
+### Percentage of restaurants requiring return inspection
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+return_inspections <- inspection_data_not_dup %>% 
+  group_by(Year, Business_ID)%>% 
+  summarise(count= length(which(Inspection_Type == "Return Inspection"))) %>%
+  filter(count > 0) %>%
+  group_by(Year) %>%
+  summarise(count = n())
+
+return_inspections$ratio <- return_inspections$count/unique_business_inspection_year$count_businesses
+
+return_inspections %>%
+  ggplot(mapping = aes(x = Year, y = ratio)) +
+  geom_bar(stat = "identity") +
+  geom_point() +
+  geom_line(group = 1)
+
+```
+
+ - Included 2019 as well because we are calculating percentages  
+ - In 2014, `r round(return_inspections$ratio[9]*100,2)`% of restaurants needed return inspection which was a huge jump from 2013. 2014 was the year when there was a major food borne illess outbreak. The percentage increased to `r round(return_inspections$ratio[10]*100,2)`% in 2015  
+ - It started to decline in 2016 and has been since then  
+
+### Number of violations per restaurant every year
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+violations_year <- inspection_data %>% 
+  group_by(Year) %>% 
+  filter(Violation_Points != 0) %>%
+  summarise(count = n()) 
+
+violations_year$ratio <- violations_year$count / unique_business_inspection_year$count_businesses
+
+violations_year %>% 
+  filter(Year!='2019') %>%
+  ggplot(mapping = aes(y = ratio, x = Year)) +
+  geom_bar(stat = "identity") +
+  geom_point() +
+  geom_line(group = 1)
+```
+
+ - There was a hugh jump in 2014(illness outbreak), the number of violations per restaurant increased to a little more than `r round(violations_year$ratio[9])`
+ - In 2018, the number of violations per restaurant declined to approximately `r round(violations_year$ratio[13],2)`
+
+### Percentage of restaurants with violation
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+unique_business_violation_year <- inspection_data %>% 
+    group_by(Year)%>% 
+    filter(Violation_Points != 0) %>%
+    summarise(count_unique_businesses = n_distinct(Business_ID))
+
+unique_business_violation_year$ratio <- unique_business_violation_year$count_unique_businesses/unique_business_inspection_year$count_businesses
+
+unique_business_violation_year%>%
+    ggplot(mapping = aes(y = ratio, x = Year)) +
+    geom_bar(stat = "identity") +
+    geom_point() +
+    geom_line(group = 1) 
+```
+
+ - Again we have 2019 here because we are calculating percentage, not the absolutes
+ - The percentage of restaurants violating increased to `r round(unique_business_violation_year$ratio[9],2)*100`% in 2014 and then started to decline in 2015
+ - We can see there is a sharp decline in 2019 which is `r round(unique_business_violation_year$ratio[9],2)*100`%
+
+### Percentage of restaurants with no violation
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+none_count <- inspection_data %>% 
+  group_by(Year, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type != "NONE"))) %>% 
+  filter(count == 0) %>% 
+  group_by(Year) %>% 
+  summarise(none = n())
+
+none_count$ratio <- none_count$none / unique_business_inspection_year$count_businesses
+
+none_count %>% 
+  ggplot(mapping = aes(x = Year, y = ratio)) +
+  geom_bar(stat = "identity") +
+  geom_point() +
+  geom_line(group = 1) 
+```
+
+ -  The percentage of businesses in King County that have no violation increased in 2018 from `r round(none_count$ratio[12]*100,2)`% to `r round(none_count$ratio[13]*100,2)`%  
+ - The percentage has further increased to `r round(none_count$ratio[14]*100,2)`% in 2019      
+ - Has this percentage improved across major 5 cities?
+
+### Percentage of restaurants with red violations
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+red_count_total <- inspection_data %>% 
+  group_by(Year, Business_ID) %>%
+  summarise(count = length(which(Violation_Type == "RED"))) %>%
+  filter(count != 0) 
+
+red_count <- red_count_total %>%
+  group_by(Year) %>%
+  summarise(red = n())
+
+red_count$ratio <- red_count$red/unique_business_inspection_year$count_businesses
+
+red_count %>%
+  ggplot(mapping = aes(x = Year, y = ratio)) +
+  geom_bar(stat = "identity") +
+  geom_point() +
+  geom_line(group = 1) 
+
+```
+
+ - The percentage of restaurant with red violations were really high in 2014 and 2015 which were `r round(red_count$ratio[9],2)*100`% and `r round(red_count$ratio[10]*100,2)`% respectively
+ - They started to decline in 2016
+ - Has this percentage improved across major 5 cities?
+
+### Percentage of restaurants with blue violations
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+blue_count_total <- inspection_data %>% 
+  group_by(Year, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "BLUE"))) %>%
+  filter(count != 0)
+
+red_count_total <- red_count_total %>% select(-3) 
+blue_count_total <- blue_count_total %>% select(-3)
+
+intersect <- inner_join(red_count_total, blue_count_total)
+blue_count <- anti_join(blue_count_total, intersect, by = c('Year','Business_ID'))
+
+blue_count <- blue_count %>%
+              group_by(Year) %>%
+              summarise(blue = n())
+
+blue_count$ratio <- blue_count$blue/unique_business_inspection_year$count_businesses
+
+blue_count %>%
+  ggplot(mapping = aes(x = Year, y = ratio)) +
+  geom_bar(stat = "identity") +
+  geom_point() +
+  geom_line(group = 1) +
+  scale_x_discrete(labels = c('2006':'2019'))
+  
+```
+
+- The percentage of restaurants with blue violations declined to `r round(blue_count$ratio[10],2)*100`% in 2015
+- It started to increase in 2016 but the percentage difference is not very high
+
+### Percentage of restaurants with no violation across 5 major cities
+
+```{r}
+city_unique_business_inspection_year <- inspection_data_not_dup %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City) %>% 
+  summarise(count_businesses = n_distinct(Business_ID))
+
+city_none_count <- inspection_data %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type != "NONE"))) %>% 
+  filter(count == 0) %>% 
+  group_by(Year, City) %>% 
+  summarise(none = n())
+
+merged_none <- merge(city_unique_business_inspection_year, city_none_count, by = c('Year','City'))
+merged_none$rate <- merged_none$none/merged_none$count_businesses
+
+merged_none %>% 
+  ggplot(mapping = aes(y = rate, x = Year, group = City)) +
+  geom_line() +
+  facet_wrap(~City)
+```
+
+ - All 5 cities are responding are improved with the new rating system in 2017 in terms of percentage of non-violating restaurants
+ - Seattle seems to be consistent after that as well
+ 
+### Percentage of restaurants with red violation across 5 major cities
+
+```{r}
+city_red_count_total <- inspection_data %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "RED"))) %>% 
+  filter(count != 0) 
+
+city_red_count <- city_red_count_total %>% 
+  group_by(Year, City) %>% 
+  summarise(red = n())
+
+merged_red <- merge(city_unique_business_inspection_year, city_red_count, by = c('Year','City'))
+merged_red$rate <- merged_red$red/merged_red$count_businesses
+
+
+merged_red %>% 
+  ggplot(mapping = aes(y = rate, x = Year, group = City)) +
+  geom_line() +
+  facet_wrap(~City)
+```
+
+ - Other than Renton, there was a decline in percentage of red violation restaurants from 2016 to 2017
+ - Only Seattle seems to be follow the trend after that as well
+
+### Percentage of restaurants with blue violation across 5 major cities
+
+```{r}
+city_blue_count_total <- inspection_data %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>%
+  group_by(Year, City, Business_ID) %>% 
+  summarise(count = length(which(Violation_Type == "BLUE"))) %>%
+  filter(count != 0)
+
+city_red_count_total <- city_red_count_total %>% select(-4) 
+city_blue_count_total <- city_blue_count_total %>% select(-4)
+intersect <- inner_join(city_red_count_total, city_blue_count_total)
+city_blue_count <- anti_join(city_blue_count_total, intersect, by = c('Year','City','Business_ID'))
+city_blue_count <- city_blue_count %>%
+              group_by(Year, City) %>%
+              summarise(blue = n())
+
+merged_blue <- merge(city_unique_business_inspection_year, city_blue_count, by = c('Year','City'))
+merged_blue$rate <- merged_blue$blue/merged_blue$count_businesses
+
+
+merged_blue %>% 
+  ggplot(mapping = aes(y = rate, x = Year, group = City)) +
+  geom_line() +
+  facet_wrap(~City)
+```
+
+ - There is no major impact on blue violation restaurants across 5 major cities from 2016 to 2017
+ - Federal way seems to be performing the worst
+
+### Monthly pattern of red violations
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data %>%
+  filter(Violation_Points != 0) %>%
+  group_by(Year, Month) %>%
+  filter(Year != '2019') %>%
+  summarise(count = length(which(Violation_Type == "RED"))) %>%
+  ggplot(mapping = aes(y = count, x = Month, group = 1)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~Year) 
+```
+
+ - It appears that red violations increase at the beginning of the year, comes down in summer and then increase during winter again
+ - For some reason, December 2008 had very few red violations
+ - This is a pattern to be analyzed in future as how does the seasons affect violations?
+
+### Pattern of violation numbers every month
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+count_violation_number <- inspection_data %>% 
+  group_by(Month, Violation_Number) %>% 
+  summarise(count = n())
+
+count_violation_number[order(count_violation_number$Month,-count_violation_number$count),] %>% 
+  filter(Violation_Number != 'NONE') %>% 
+  group_by(Month) %>% 
+  top_n(n=3) %>%
+  ggplot(mapping = aes(x=Month, y=count, fill = Violation_Number)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  coord_flip()
+  
+```
+
+ - These are the top 3 violation types ocurring every month
+ - 200 (Food worker cards not current), 600 (Adequate handwashing) and 2110 (Proper cold holding tempearature) are red violations
+ - 3400 (Wiping clothes properly used) is a blue violation
+ - Violation number 0200  is more common in January and February
+
+### Median of inspection scores for violating businesses
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>%
+  filter(Inspection_Score != 0) %>%
+  group_by(Year) %>%
+  summarise(score = median(Inspection_Score)) %>%
+  ggplot(mapping = aes(y = score, x = Year, group = 1)) +
+  geom_point() +
+  geom_line()
+
+```
+
+ - 2014 food illness outbreak has something to do with the increase of inspection score?  
+ - The median of inspection scores decline drastically from 2016 to 2017
+ - This might be the impact of the new rating system introduced in 2017  
+ - Is the same pattern across the 5 major cities?
+
+### Median of inspection scores for violating businesses across 5 major cities
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>%
+  filter(Inspection_Score != 0) %>%
+  filter(City %in% c("SEATTLE","BELLEVUE","RENTON","KENT","FEDERAL WAY")) %>% 
+  group_by(Year, City) %>%
+  summarise(score = median(Inspection_Score)) %>%
+  ggplot(mapping = aes(y = score, x = Year, group = City)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~City)
+
+```
+
+ - Bellevue did not have a decline in median inspection score since 2008
+ - Seattle is the only city where median inspection score declined in 2017  
+ - Median inspection score in Renton declined in 2018
+ 
+### Inspection scores across Seating types
+ 
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+inspection_data_not_dup %>% 
+  ggplot(aes(x = Seating, y = Inspection_Score)) +
+  geom_boxplot() +
+  ylim(0,50)
+```
+ 
+ - There are differences in the inter quartile range for inspection scores for various seating types 
+ 
+### Inspection scores across Risk Categories
+ 
+```{r warning=FALSE, echo=FALSE, message=FALSE} 
+inspection_data_not_dup %>% 
+  ggplot(aes(x = Risk_Category, y = Inspection_Score)) +
+  geom_boxplot() +
+  ylim(0,50)
+
+inspection_data_not_dup %>% 
+  ggplot(aes(x = Inspection_Score, fill = Risk_Category)) +
+  geom_density() +
+  xlim(0,50)
+```
+
+ - Restaurants with Risk Category III have higher interquartile range for inspection scores
+ 
+### Inspection scores across Cities
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+inspection_data_not_dup %>% 
+  filter(City %in% c("SEATTLE","BELLEVUE","RENTON","FEDERAL WAY","KENT")) %>% 
+  ggplot(aes(x = City, y = Inspection_Score)) +
+  geom_boxplot() +
+  ylim(0,50)
+
+inspection_data_not_dup %>% 
+  filter(City %in% c("SEATTLE","BELLEVUE","RENTON","FEDERAL WAY","KENT")) %>% 
+  ggplot(aes(x = Inspection_Score, fill = City)) +
+  geom_density() +
+  xlim(0,50)
+
+```
+
+ - Bellevue, Seattle and Federal Way have wider interquartile range for inspection score
+ - How does this vary across the years?
+
+ 
++ __Findings__
+ - In the new system introduced in 2017, number of inspections are increasing at a higher rate as compared to increase in the number of restaurants  
+ - Percentage of restaurants requiring return inspection were really high in 2014 and 2015 and started to decline in 2016
+ - In 2014, there were a high number of violations even though the increase in number of restaurants grew at the regular rate which implies there were more violations per restaurant in 2014
+ - With the enforcement of new rating system, the number of restaurants with no violations increased much faster
+ - There was a huge increase in red violations in 2014 which only started to reduce since 2017
+ - After the introduction of the new rating system, number of restaurants with 0 critical violations increased from 55% in 2016 to 57% in 2017. It further increased to 61% in 2018.
+ - Number of red violations follow a pattern throughout the year. Spring has the maximum number of red violations followed by winter
+ - The most common types of violations occurring are 200,600,2110 (Red) and 3400 (Blue)
+ - Inspection Score shoot up really high in 2014 and started to decline significantly after 2017 since the introduction of the new rating system
+ - The median inspection score of 5 major cities is closer to zero, does this pattern change after the introduction of the new rating system?
+ - Median Inspection Score never declined in Bellevue
+ - Seattle is the only city where median inspection score declined in 2017
+ 
+# Testing statistical significance
+
+## The percentage of restaurants with no violations/red violations/blue violations have changed since the introduction of new rating system in 2017
+
+We are going to perform a chi square test where we will compare the 2017 data (proportion of restaurants with none/red/blue violations) against the proportion of restaurants with none/red/blue violations which happened in 2016   
+Note: Restaurants which have both red and blue violations, have been categorized under restaurants with red violations
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+none_count <- none_count %>% select(1,2)
+red_count <- red_count %>% select(1,2)
+blue_count <- blue_count %>% select(1,2)
+
+merged_violations <- merge(unique_business_inspection_year,none_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merge(merged_violations, red_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merge(merged_violations, blue_count, by = c('Year'), all.x = TRUE)
+merged_violations <- merged_violations %>% gather(type, count, none:blue)
+merged_violations$rate <- merged_violations$count/merged_violations$count_businesses
+merged_violations$label <- paste0(sprintf("%.0f", merged_violations$rate*100), "%")
+
+# Setting the probabilites for 2016
+exp_prob <- c((merged_violations %>% filter(Year == "2016" & type == "none"))$rate,
+             (merged_violations %>% filter(Year == "2016" & type == "red"))$rate,
+             (merged_violations %>% filter(Year == "2016" & type == "blue"))$rate)
+
+test_data <- c((merged_violations %>% filter(Year == "2017" & type == "none"))$count,
+             (merged_violations %>% filter(Year == "2017" & type == "red"))$count,
+             (merged_violations %>% filter(Year == "2017" & type == "blue"))$count)
+
+# Testing the data on the count of each
+chisq.test(test_data, exp_prob) 
+```
+
+ - From this test, we can conclude with 80% confidence that there is a significant difference between proportions of businesses having none, red and blue violations in 2017 as compared to 2016.
+
+```{r}
+
+merged_violations %>%
+        ggplot(mapping = aes(x = Year, y = rate, fill = factor(type, levels = c('blue','red','none')))) +
+        geom_bar(position = position_stack(), stat = "identity", width = 0.7) +
+        geom_text(aes(label = label), position = position_stack(vjust = 0.5), size = 3, color = 'black') +
+        coord_flip() +
+        scale_fill_manual(values = c('steelblue4','red4','snow4'), name = "Violation Type:", labels = c("Blue","Red","None")) +
+        theme(legend.position = 'bottom', axis.title.y = element_blank(), plot.title = element_text(size = 11), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.title = element_text(size = 8), legend.text = element_text(size = 8), legend.key.size = unit(0.8,"line"),legend.margin=margin(0,0,0,0),legend.box.margin=margin(-3,-3,-3,-3)) +
+        labs(title = "New rating system is leading to healthier restaurants", y = "") +
+        guides(fill = guide_legend(reverse = TRUE))
+
+ggsave('No_Violations.png')
+```
+
+ - For the years 2007, 2008 and 2010, the percentage is not totalling to 100% because of rounding off, for the exact percentages, please refer to the table below:
+ 
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+rate_table <- merged_violations %>% select(c(1,3,5))
+rate_table <- reshape(rate_table, idvar = "Year", timevar = "type", direction = "wide")
+rate_table$rate.none <- rate_table$rate.none * 100
+rate_table$rate.red <- rate_table$rate.red * 100
+rate_table$rate.blue <- rate_table$rate.blue * 100
+rate_table$total <- rate_table$rate.none + rate_table$rate.red + rate_table$rate.blue
+
+rate_table %>% 
+  map_df(rev) %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+
+## The percentage of restaurants with no violations/red violations/blue violations have changed since the introduction of new rating system in 2017 across 5 major cities
+
+To test that, we will perform a similar chi-square test for Seattle, Bellevue, Federal Way, Kent, Redmond individually
+
+SEATTLE
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+exp_prob_seattle <- c((merged_none %>% filter(Year == "2016" & City == "SEATTLE"))$rate,
+(merged_red %>% filter(Year == "2016" & City == "SEATTLE"))$rate,
+(merged_blue %>% filter(Year == "2016" & City == "SEATTLE"))$rate)
+
+
+test_data_seattle <- c((merged_none %>% filter(Year == "2017" & City == "SEATTLE"))$none,
+             (merged_red %>% filter(Year == "2017" & City == "SEATTLE"))$red,
+             (merged_blue %>% filter(Year == "2017" & City == "SEATTLE"))$blue)
+
+chisq.test(test_data_seattle, exp_prob_seattle) 
+``` 
+
+BELLEVUE
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+exp_prob_bell <- c((merged_none %>% filter(Year == "2016" & City == "BELLEVUE"))$rate,
+(merged_red %>% filter(Year == "2016" & City == "BELLEVUE"))$rate,
+(merged_blue %>% filter(Year == "2016" & City == "BELLEVUE"))$rate)
+
+
+test_data_bell <- c((merged_none %>% filter(Year == "2017" & City == "BELLEVUE"))$none,
+             (merged_red %>% filter(Year == "2017" & City == "BELLEVUE"))$red,
+             (merged_blue %>% filter(Year == "2017" & City == "BELLEVUE"))$blue)
+
+chisq.test(test_data_bell, exp_prob_bell) 
+```
+
+FEDERAL WAY
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+exp_prob_fed <- c((merged_none %>% filter(Year == "2016" & City == "FEDERAL WAY"))$rate,
+(merged_red %>% filter(Year == "2016" & City == "FEDERAL WAY"))$rate,
+(merged_blue %>% filter(Year == "2016" & City == "FEDERAL WAY"))$rate)
+
+
+test_data_fed <- c((merged_none %>% filter(Year == "2017" & City == "FEDERAL WAY"))$none,
+             (merged_red %>% filter(Year == "2017" & City == "FEDERAL WAY"))$red,
+             (merged_blue %>% filter(Year == "2017" & City == "FEDERAL WAY"))$blue)
+
+chisq.test(test_data_fed, exp_prob_fed) 
+```
+
+KENT
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+exp_prob_kent <- c((merged_none %>% filter(Year == "2016" & City == "KENT"))$rate,
+(merged_red %>% filter(Year == "2016" & City == "KENT"))$rate,
+(merged_blue %>% filter(Year == "2016" & City == "KENT"))$rate)
+
+
+test_data_kent <- c((merged_none %>% filter(Year == "2017" & City == "KENT"))$none,
+             (merged_red %>% filter(Year == "2017" & City == "KENT"))$red,
+             (merged_blue %>% filter(Year == "2017" & City == "KENT"))$blue)
+
+chisq.test(test_data_kent, exp_prob_kent) 
+```
+
+RENTON
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+exp_prob_renton <- c((merged_none %>% filter(Year == "2016" & City == "RENTON"))$rate,
+(merged_red %>% filter(Year == "2016" & City == "RENTON"))$rate,
+(merged_blue %>% filter(Year == "2016" & City == "RENTON"))$rate)
+
+
+test_data_renton <- c((merged_none %>% filter(Year == "2017" & City == "RENTON"))$none,
+             (merged_red %>% filter(Year == "2017" & City == "RENTON"))$red,
+             (merged_blue %>% filter(Year == "2017" & City == "RENTON"))$blue)
+
+chisq.test(exp_prob_renton, exp_prob_renton) 
+```
+From these tests, we can conclude with 80% confidence that there is a significant difference between proportions of restaurants having none, red and blue violations in 2017 as compared to 2016 for all major 5 cities - Seattle, Bellevue, Federal Way, Kent and Redmond. 
+
+
+```{r}
+subtitle = paste0("In Seattle, restaurants with no violations increased to ",round(merged_none[60,5]*100), "%, ",round(merged_none[65,5]*100), "% and ",round(merged_none[70,5]*100), "% in 2017, 2018 and 2019, respectively") 
+
+merged_none %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  ggplot(mapping = aes(y = rate*100, x = Year, group = City, color = City, alpha = City, size = City)) +
+  geom_line() +
+  labs(title = "Seattle is the only city with consistent growing percentage of non-violating restaurants since the \nintroduction of new system in January 2017", x = "", y = "Percentage of non-violating restaurants", subtitle = subtitle) +
+  scale_alpha_manual(values = c(0.4,0.4,0.4,0.4,0.8)) +
+  scale_size_manual(values = c(1,1,1,1,3)) +
+  scale_color_manual(values = c("darkorange3","cadetblue","purple4","yellow4","grey25")) +
+  scale_y_continuous(labels = function(x) paste0(x, '%')) +
+  theme(plot.title = element_text(size = 11), plot.subtitle = element_text(size = 9), axis.title = element_text(size = 9), legend.position = "bottom", legend.title = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black")) 
+
+ggsave('Seattle_no_violation.png')
+```
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+subtitle = paste0("In Seattle, restaurants with red violations declined to ",round(merged_red[60,5]*100), "% , ",round(merged_red[65,5]*100), "%  and ",round(merged_red[70,5]*100), "% in 2017, 2018 and 2019, respectively") 
+
+merged_red %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  ggplot(mapping = aes(y = rate*100, x = Year, group = City, color = City, alpha = City, size = City)) +
+  geom_line() +
+  labs(title = "Seattle is the only city with consistent declining percentage of red violation restaurants since the \nintroduction of new system in January 2017", subtitle = subtitle, x = "", y = "Percentage of red violation restaurants") + scale_y_continuous(labels = function(x) paste0(x, '%')) +
+  scale_alpha_manual(values = c(0.4,0.4,0.4,0.4,0.8)) +
+  scale_size_manual(values = c(1,1,1,1,3)) +
+  scale_color_manual(values = c("darkorange3","cadetblue","purple4","yellow4","grey25")) +
+  #scale_y_continuous(labels = percent) +
+  theme(plot.title = element_text(size = 11), plot.subtitle = element_text(size = 9), axis.title = element_text(size = 9), legend.position = "bottom", panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), legend.title = element_blank())
+
+ggsave('Seattle_no_red_violation.png')
+```
+
+## The median inspection score of violating restaurants have declined since the introduction of new rating system in 2017
+
+As we saw earlier in this document since inspection score is a skewed measure we should use the median instead of the mean. To test if the medians are different we will utilize the Mood’s median test.   
+Note: For testing the significance, I have used the data since 2014 because that is when food borne illness outbreak happened which led to the idea of the new rating system
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+median_test <- inspection_data_not_dup %>%
+  filter(Inspection_Score != 0) %>% 
+  filter(Year %in% c('2014','2015','2016','2017','2018','2019')) %>% 
+  mutate(Year = as.factor(Year))
+                                                                          
+
+PT = pairwiseMedianMatrix(Inspection_Score ~ Year,
+                        data   = median_test,
+                        exact  = NULL,
+                        method = "bonferroni")
+
+kable(PT$Adjusted) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+
+ - We can conclude (at 95% confidence level) that median inspection scores in 2014, 2015 and 2016 are statistically different from 2017, 2018 and 2019 after the introduction of new rating system in 2017  
+
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+median_inspection_score <- inspection_data_not_dup %>%
+  filter(Inspection_Score != 0) %>%
+  group_by(Year) %>%
+  summarise(score = median(Inspection_Score)) 
+
+subtitle = paste0("After the introduction of the new rating system in 2017, there was a decline of ", round((median_inspection_score$score[11] - median_inspection_score$score[12])/median_inspection_score$score[11]*100,2), "% median inspection score")
+
+median_inspection_score %>%
+  ggplot(mapping = aes(y = score, x = Year, group = 1)) +
+  geom_line() +
+  geom_vline(xintercept = 9, linetype="dotted", color = "dark grey", size=1) +
+  geom_vline(xintercept = 12, linetype="dotted", color = "dark grey", size=1) +
+  scale_x_discrete(labels = c('2006':'2019')) +
+  labs(title = "New rating system is leading to better inspection scores",subtitle = subtitle , y = "Median Inspection Score", x ="") +
+  annotate("text", x = 7.9, y = 14.6, label = "Food Borne \nIllness Outbreak", size = 3, color ="dark grey") +
+  annotate("text", x = 12.8, y = 14.6, label = "New Rating \nSystem", size = 3, color = 
+             "dark grey") +
+  theme(plot.title = element_text(size = 11) ,plot.subtitle = element_text(size = 9), axis.title = element_text(size = 9), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), legend.title = element_blank())
+
+ggsave('inspection_score.png')
+```
+
+## The median inspection score of violating restaurants declined only in Seattle & Renton since the introduction of new rating system in 2017
+
+As we saw earlier in this document since inspection score is a skewed measure we should use the median instead of the mean. To test if the medians are different we will utilize the Mood’s median test.   
+Note: For testing the significance, I have used the data since 2014 because that is when food borne illness outbreak happened which led to the idea of the new rating system
+
+SEATTLE
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+median_test_seattle <- inspection_data_not_dup %>%
+  filter(City == "SEATTLE") %>% 
+  filter(Inspection_Score != 0) %>% 
+  filter(Year %in% c('2014','2015','2016','2017','2018','2019')) %>% 
+  mutate(Year = as.factor(Year))
+                                                                          
+
+PT = pairwiseMedianMatrix(Inspection_Score ~ Year,
+                        data   = median_test_seattle,
+                        exact  = NULL,
+                        method = "bonferroni")
+
+kable(PT$Adjusted) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+
+BELLEVUE
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+median_test_bell <- inspection_data_not_dup %>%
+  filter(City == "BELLEVUE") %>% 
+  filter(Inspection_Score != 0) %>% 
+  filter(Year %in% c('2014','2015','2016','2017','2018','2019')) %>% 
+  mutate(Year = as.factor(Year))
+                                                                          
+
+PT = pairwiseMedianMatrix(Inspection_Score ~ Year,
+                        data   = median_test_bell,
+                        exact  = NULL,
+                        method = "bonferroni")
+
+kable(PT$Adjusted) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+
+FEDERAL WAY
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+median_test_fed <- inspection_data_not_dup %>%
+  filter(City == "FEDERAL WAY") %>% 
+  filter(Inspection_Score != 0) %>% 
+  filter(Year %in% c('2014','2015','2016','2017','2018','2019')) %>% 
+  mutate(Year = as.factor(Year))
+                                                                          
+
+PT = pairwiseMedianMatrix(Inspection_Score ~ Year,
+                        data   = median_test_fed,
+                        exact  = NULL,
+                        method = "bonferroni")
+
+kable(PT$Adjusted) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+
+KENT
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+median_test_kent <- inspection_data_not_dup %>%
+  filter(City == "KENT") %>% 
+  filter(Inspection_Score != 0) %>% 
+  filter(Year %in% c('2014','2015','2016','2017','2018','2019')) %>% 
+  mutate(Year = as.factor(Year))
+                                                                          
+
+PT = pairwiseMedianMatrix(Inspection_Score ~ Year,
+                        data   = median_test_kent,
+                        exact  = NULL,
+                        method = "bonferroni")
+
+kable(PT$Adjusted) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+
+
+RENTON
+```{r warning=FALSE, echo=FALSE, message=FALSE}
+
+median_test_renton <- inspection_data_not_dup %>%
+  filter(City == "RENTON") %>% 
+  filter(Inspection_Score != 0) %>% 
+  filter(Year %in% c('2014','2015','2016','2017','2018','2019')) %>% 
+  mutate(Year = as.factor(Year))
+                                                                          
+
+PT = pairwiseMedianMatrix(Inspection_Score ~ Year,
+                        data   = median_test_renton,
+                        exact  = NULL,
+                        method = "bonferroni")
+
+kable(PT$Adjusted) %>% kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = T)
+```
+ 
+ - We can conclude (at 95% confidence level) that median inspection scores in 2014, 2015 and 2016 are statistically different from 2017, 2018 and 2019 after the introduction of new rating system in 2017 only in Seattle
+ 
+```{r}
+#Citywise median inspection score
+
+median_inspection_score_cities <- inspection_data_not_dup %>% 
+  filter(City %in% c("BELLEVUE","KENT","FEDERAL WAY","SEATTLE","RENTON")) %>% 
+  filter(Inspection_Score != 0) %>% 
+  group_by(Year, City) %>% 
+  summarise(score = median(Inspection_Score))
+
+subtitle = paste0("Median inspection score of Bellevue has been ", median_inspection_score_cities[66,3], " in 2018 and 2019 when the other cities were at ", median_inspection_score_cities[70,3])
+
+  
+ median_inspection_score_cities %>% 
+  ggplot(mapping = aes(x = Year, y = score, group = City, color = City, alpha = City, size = City)) + 
+  geom_line() +
+  labs(title = "Median Inspection score of all the cities is now the same except Bellevue", subtitle = subtitle, y = "Median Inspection Score") +
+  scale_alpha_manual(values = c(0.6,0.4,0.4,0.4,0.6)) +
+  scale_size_manual(values = c(3,2,1,1,1)) +
+  scale_color_manual(values = c("darkorange3","cadetblue","purple4","yellow4","grey25")) +
+  theme(plot.title = element_text(size = 11), plot.subtitle = element_text(size = 9), axis.title = element_text(size = 9), legend.position = "bottom",panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(color = "black"), legend.title = element_blank()) 
+ 
+ggsave('inspection_score_cities.png') 
+```
