@@ -9,7 +9,7 @@ For more detailed information and screenshots about this project, please go to [
 
 
 ## Effectiveness of advertising and promotions for General Mills
-Performed exploratory data analysis on weekly sales data of cereals from several stores and analyzed the effectiveness of advertising and promotions for General Mills in R 
+Performed exploratory data analysis on weekly sales data of cereals from several stores and analyzed the effectiveness of advertising and promotions for General Mills in R. For further details about my work on this project, please refer to [Effectiveness of advertising and promotions for General Mills](./general-mills-ads-promos)
 
 ## Determine the compensation for Ontario, Canada residents due to lost area from road widening project
-Using Multiple Regression in R, formulated an econometric model determining the price of a house in Ontario, Canada and applied the model to estimate the compensation for residents due to lost area of the house from road widening project
+Using Multiple Regression in R, formulated an econometric model determining the price of a house in Ontario, Canada and applied the model to estimate the compensation for residents due to lost area of the house from road widening project. For further details about my work on this project, please refer to [compensation for Ontario, Canada residents due to lost area from road widening project](./ontario-compensation)
